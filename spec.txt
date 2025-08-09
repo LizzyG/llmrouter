@@ -1,0 +1,263 @@
+LLM Module Spec (Final)
+Purpose
+
+This module provides a Go‑native, multi‑model LLM interface with:
+
+    Typed final outputs via generics (Execute[T])
+    Centralized, provider‑agnostic tool execution loop
+    Automatic model/provider selection based on request + model capabilities
+    Strongly typed tool parameter passing + JSON schema generation
+    Koanf‑driven model registry (YAML/ConfigMap for prod, file/local for dev)
+
+1. Public API
+Interfaces
+
+// Client is the only type the pipeline talks to.
+type Client interface {
+    // Execute sends the request to the selected model, orchestrates tool calls if needed,
+    // and returns a parsed result of type T.
+    Execute[T any](ctx context.Context, req Request) (T, error)
+}
+
+// Tool is implemented by any callable function the model can invoke.
+type Tool interface {
+    Name() string
+    Description() string
+    Parameters() any // struct type for JSON schema generation
+    Execute(ctx context.Context, args any) (any, error)
+}
+
+Public Request/Response
+
+type Request struct {
+    Model          string
+    Messages       []Message
+    AllowWebSearch bool   // if true, router picks a search-capable model if needed
+    Tools          []Tool // executable tool implementations
+    MaxTokens      int
+    Temperature    float32
+    TopP           float32
+}
+
+type Message struct {
+    Role    MessageRole
+    Content string
+    Images  []string // optional base64 or URLs
+}
+
+type MessageRole string
+const (
+    RoleSystem    MessageRole = "system"
+    RoleUser      MessageRole = "user"
+    RoleAssistant MessageRole = "assistant"
+)
+
+2. Config & Model Registry
+YAML/ConfigMap Format
+
+llm:
+  models:
+    gpt4o:
+      provider: openai
+      model: gpt-4o
+      api_key: ${OPENAI_API_KEY}
+      supports_web_search: false
+      supports_tools: true
+      context_window: 128000
+      max_output_tokens: 4000
+    claude3sonnet:
+      provider: anthropic
+      model: claude-3-sonnet-20240229
+      api_key: ${ANTHROPIC_API_KEY}
+      supports_web_search: true
+      supports_tools: true
+      context_window: 200000
+      max_output_tokens: 4096
+
+Go Structs
+
+type LLMConfig struct {
+    Models map[string]ModelConfig `koanf:"models"`
+}
+
+type ModelConfig struct {
+    Provider          string `koanf:"provider"`
+    Model             string `koanf:"model"`
+    APIKey            string `koanf:"api_key"`
+    SupportsWebSearch bool   `koanf:"supports_web_search"`
+    SupportsTools     bool   `koanf:"supports_tools"`
+    ContextWindow     int    `koanf:"context_window"`
+    MaxOutputTokens   int    `koanf:"max_output_tokens"`
+}
+
+3. Internal Components
+Router (Model/Provider Selection)
+
+type router struct {
+    models  map[string]ModelConfig
+    clients map[string]RawClient // provider → singleton
+    mu      sync.Mutex
+}
+
+func NewRouter(models map[string]ModelConfig) Client {
+    return &router{
+        models:  models,
+        clients: make(map[string]RawClient),
+    }
+}
+
+Selection logic:
+
+    If req.Model != "" → check exists, use.
+    Else:
+        If req.AllowWebSearch, pick first model with SupportsWebSearch=true (+ other flags).
+        If len(req.Tools) > 0, only choose SupportsTools=true.
+    Error if no matching model.
+
+Get or Create RawClient:
+
+func (r *router) getClient(mc ModelConfig) (RawClient, error) {
+    r.mu.Lock()
+    defer r.mu.Unlock()
+    if c, ok := r.clients[mc.Provider]; ok {
+        return c, nil
+    }
+    c, err := newProviderClient(mc) // builds openAIClient, anthropicClient, etc.
+    if err != nil {
+        return nil, err
+    }
+    r.clients[mc.Provider] = c
+    return c, nil
+}
+
+RawClient (Provider Adapter)
+
+type RawClient interface {
+    // Single model call — no tool loop — returns possibly a tool call request.
+    Call(ctx context.Context, params CallParams) (RawResponse, error)
+}
+
+type CallParams struct {
+    Model       string
+    Messages    []Message
+    ToolDefs    []ToolDef // names/descriptions/JSON schemas only
+    OutputSchema string   // optional JSON schema for final output
+    MaxTokens    int
+    Temperature  float32
+    TopP         float32
+}
+
+type ToolDef struct {
+    Name        string
+    Description string
+    JSONSchema  string
+}
+
+type RawResponse struct {
+    Content   string      // Final model text if no tool call
+    ToolCalls []ToolCall  // Zero or more requested tool invocations
+}
+
+type ToolCall struct {
+    Name string
+    Args json.RawMessage
+}
+
+Example: openAIClient.Call maps CallParams → OpenAI API payload,
+translates API’s tool_calls → []ToolCall.
+4. Orchestrator (Central Tool Loop)
+
+The router implements Client.Execute[T] by calling an internal orchestrator:
+
+func (r *router) Execute[T any](ctx context.Context, req Request) (T, error) {
+    var zero T
+
+    mc, err := r.selectModel(req)
+    if err != nil {
+        return zero, err
+    }
+    rc, err := r.getClient(mc)
+    if err != nil {
+        return zero, err
+    }
+
+    // Prepare tool definitions for the API
+    defs := make([]ToolDef, len(req.Tools))
+    for i, t := range req.Tools {
+        defs[i] = ToolDef{
+            Name:        t.Name(),
+            Description: t.Description(),
+            JSONSchema:  generateJSONSchema(t.Parameters()), // reflect -> JSON schema
+        }
+    }
+
+    // If provider supports structured output, build schema for T
+    outputSchema := generateJSONSchema(new(T))
+
+    conversation := req.Messages
+    for turn := 0; turn < maxToolTurns; turn++ {
+        resp, err := rc.Call(ctx, CallParams{
+            Model:        mc.Model,
+            Messages:     conversation,
+            ToolDefs:     defs,
+            OutputSchema: outputSchema,
+            MaxTokens:    boundedInt(req.MaxTokens, mc.MaxOutputTokens),
+            Temperature:  req.Temperature,
+            TopP:         req.TopP,
+        })
+        if err != nil {
+            return zero, err
+        }
+
+        // STOP: No tool call → Final answer
+        if len(resp.ToolCalls) == 0 {
+            var result T
+            if err := json.Unmarshal([]byte(resp.Content), &result); err != nil {
+                return zero, fmt.Errorf("failed to unmarshal into %T: %w", result, err)
+            }
+            return result, nil
+        }
+
+        // EXECUTE TOOLS
+        for _, tc := range resp.ToolCalls {
+            tool := findTool(req.Tools, tc.Name)
+            if tool == nil {
+                return zero, fmt.Errorf("unknown tool: %s", tc.Name)
+            }
+            argStruct := tool.Parameters()
+            if err := json.Unmarshal(tc.Args, &argStruct); err != nil {
+                return zero, err
+            }
+            output, err := tool.Execute(ctx, argStruct)
+            if err != nil {
+                return zero, err
+            }
+            // Feed tool output back as an assistant message
+            conversation = append(conversation, Message{
+                Role:    RoleAssistant,
+                Content: formatToolResult(tc.Name, output),
+            })
+        }
+    }
+    return zero, fmt.Errorf("max tool turns exceeded")
+}
+
+5. Special Handling: Web Search
+
+    WebSearchTool implements Tool like any other.
+    Router uses SupportsWebSearch to pick native search model if available.
+    For OpenAI:
+        Provider client detects WebSearchTool and maps to their native search model/parameters instead of sending as user-defined tool.
+    For all others:
+        Sent as normal tool definition; orchestrator executes locally if model calls it.
+
+6. Utility Functions
+
+    generateJSONSchema(obj any) string: reflect on struct → JSON schema (invopop/jsonschema or similar)
+    findTool(tools []Tool, name string) Tool: linear search/mapping
+    boundedInt(req, max int) int: enforce model’s hard max
+
+7. Error & Safety Considerations
+
+    Limit maxToolTurns (configurable) to prevent infinite loops.
+    Validate tool call names

@@ -1,0 +1,31 @@
+llm:
+  models:
+    gpt4o:
+      provider: openai
+      model: gpt-4o
+      api_key: ${OPENAI_API_KEY}
+      supports_web_search: false
+      supports_tools: true
+      supports_structured_output: true
+      context_window: 128000
+      max_output_tokens: 4000
+    gpt4o-web:
+      provider: openai
+      model: gpt-4o-realtime-preview-web
+      api_key: ${OPENAI_API_KEY}
+      supports_web_search: true
+      supports_tools: true
+      supports_structured_output: true
+      context_window: 128000
+      max_output_tokens: 4000
+    gemini15pro:
+      provider: gemini
+      model: gemini-1.5-pro
+      api_key: ${GEMINI_API_KEY}
+      supports_web_search: false
+      supports_tools: true
+      supports_structured_output: true
+      context_window: 200000
+      max_output_tokens: 4096
+
+
