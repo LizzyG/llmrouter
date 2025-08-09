@@ -14,9 +14,12 @@ import (
 	_ "github.com/joho/godotenv/autoload"
 	llm "github.com/lizzyg/llmrouter"
 	"github.com/lizzyg/llmrouter/internal/config"
+	ttools "github.com/lizzyg/llmrouter/tests/tools"
 )
 
-func TestGemini_Execute_TypedJSON(t *testing.T) {
+// Use shared test tools from tests/tools
+
+func TestGemini_ToolWorkflow_LocationThenWeather(t *testing.T) {
 	apiKey := os.Getenv("GEMINI_API_KEY")
 	if apiKey == "" {
 		t.Skip("GEMINI_API_KEY not set; skipping integration test")
@@ -47,30 +50,25 @@ func TestGemini_Execute_TypedJSON(t *testing.T) {
 	}
 
 	type Answer struct {
-		Headline string   `json:"headline"`
-		Points   []string `json:"points"`
-		Stats    struct {
-			Count int     `json:"count"`
-			Score float64 `json:"score"`
-		} `json:"stats"`
-		Success bool `json:"success"`
+		Location string `json:"location"`
+		Weather  string `json:"weather"`
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
+
+	prompt := "Use tools. First GetUserLocation, then GetWeatherInLocation with that location. Respond ONLY as JSON {location, weather}."
 	got, err := llm.Execute[Answer](ctx, client, llm.Request{
-		Model: "gemini15pro",
-		Messages: []llm.Message{{
-			Role:    llm.RoleUser,
-			Content: "Respond ONLY as JSON matching this shape: {headline: string, points: string[3], stats: {count: integer > 0, score: number 0..1}, success: boolean}. Summarize Go 1.22 features.",
-		}},
-		MaxTokens:   200,
-		Temperature: 0,
+		Model:       "gemini15pro",
+		Messages:    []llm.Message{{Role: llm.RoleUser, Content: prompt}},
+		Tools:       ttools.LocationWeatherTools(),
+		MaxTokens:   300,
+		Temperature: 0.1,
 	})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if got.Headline == "" || len(got.Points) != 3 || got.Stats.Count <= 0 || got.Stats.Score < 0 || got.Stats.Score > 1 {
-		t.Fatalf("unexpected structured result: %+v", got)
+	if got.Location != "Portland, Oregon" || got.Weather != "Sunny and mild in Portland, Oregon" {
+		t.Fatalf("unexpected result: %+v", got)
 	}
-	fmt.Println("got", got)
+	fmt.Println("tool got", got)
 }

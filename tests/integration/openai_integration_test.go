@@ -5,12 +5,15 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	_ "github.com/joho/godotenv/autoload"
 	llm "github.com/lizzyg/llmrouter"
+	"github.com/lizzyg/llmrouter/internal/config"
 )
 
 func TestOpenAI_Execute_TypedJSON(t *testing.T) {
@@ -37,6 +40,7 @@ func TestOpenAI_Execute_TypedJSON(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	t.Setenv("LLM_CONFIG_PATH", cfgPath)
+	config.ResetForTest()
 
 	client, err := llm.NewFromFile()
 	if err != nil {
@@ -44,7 +48,13 @@ func TestOpenAI_Execute_TypedJSON(t *testing.T) {
 	}
 
 	type Answer struct {
-		Message string `json:"message"`
+		Headline string   `json:"headline"`
+		Points   []string `json:"points"`
+		Stats    struct {
+			Count int     `json:"count"`
+			Score float64 `json:"score"`
+		} `json:"stats"`
+		Success bool `json:"success"`
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -52,7 +62,7 @@ func TestOpenAI_Execute_TypedJSON(t *testing.T) {
 		Model: "gpt4o",
 		Messages: []llm.Message{{
 			Role:    llm.RoleUser,
-			Content: "Respond ONLY as JSON: {\"message\": \"ok\"}",
+			Content: "Respond ONLY as JSON matching this shape: {headline: string, points: string[3], stats: {count: integer > 0, score: number 0..1}, success: boolean}. Summarize Go 1.22 features.",
 		}},
 		MaxTokens:   200,
 		Temperature: 0,
@@ -60,7 +70,8 @@ func TestOpenAI_Execute_TypedJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if got.Message == "" {
-		t.Fatalf("expected non-empty message: %+v", got)
+	if got.Headline == "" || len(got.Points) != 3 || got.Stats.Count <= 0 || got.Stats.Score < 0 || got.Stats.Score > 1 {
+		t.Fatalf("unexpected structured result: %+v", got)
 	}
+	fmt.Println("got", got)
 }

@@ -32,20 +32,30 @@ func New(mc config.ModelConfig, hc *http.Client, logger *slog.Logger) *Client {
 	}
 }
 
-type responsesRequest struct {
-	Model       string           `json:"model"`
-	Messages    []map[string]any `json:"messages"`
-	Tools       []map[string]any `json:"tools,omitempty"`
-	MaxTokens   int              `json:"max_output_tokens,omitempty"`
-	Temperature float32          `json:"temperature,omitempty"`
-	TopP        float32          `json:"top_p,omitempty"`
-	Response    map[string]any   `json:"response_format,omitempty"`
+type chatRequest struct {
+	Model          string           `json:"model"`
+	Messages       []map[string]any `json:"messages"`
+	Tools          []map[string]any `json:"tools,omitempty"`
+	MaxTokens      int              `json:"max_tokens,omitempty"`
+	Temperature    float32          `json:"temperature,omitempty"`
+	TopP           float32          `json:"top_p,omitempty"`
+	ResponseFormat map[string]any   `json:"response_format,omitempty"`
 }
 
-type responsesResponse struct {
-	OutputText string         `json:"output_text"`
-	ToolCalls  []toolCallItem `json:"tool_calls"`
-	Usage      struct {
+type chatResponse struct {
+	Choices []struct {
+		Message struct {
+			Content   any `json:"content"`
+			ToolCalls []struct {
+				Type     string `json:"type"`
+				Function struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				} `json:"function"`
+			} `json:"tool_calls"`
+		} `json:"message"`
+	} `json:"choices"`
+	Usage struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
 		TotalTokens      int `json:"total_tokens"`
@@ -58,10 +68,9 @@ type toolCallItem struct {
 }
 
 func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResponse, error) {
-	// Build minimal payload; map our messages to OpenAI-style messages.
-	payload := responsesRequest{
+	payload := chatRequest{
 		Model:       params.Model,
-		Messages:    mapMessages(params.Messages),
+		Messages:    mapChatMessages(params.Messages),
 		MaxTokens:   params.MaxTokens,
 		Temperature: params.Temperature,
 		TopP:        params.TopP,
@@ -70,17 +79,15 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 		payload.Tools = mapTools(params.ToolDefs)
 	}
 	if params.OutputSchema != "" {
-		payload.Response = map[string]any{
-			"type":   "json_schema",
-			"schema": json.RawMessage(params.OutputSchema),
-		}
+		// Chat Completions supports json_object enforcement (not full schema). Use it when schema requested.
+		payload.ResponseFormat = map[string]any{"type": "json_object"}
 	}
 
 	body, _ := json.Marshal(payload)
 
-	var rr responsesResponse
+	var rr chatResponse
 	err := c.withRetry(ctx, func() error {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.openai.com/v1/responses", bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.openai.com/v1/chat/completions", bytes.NewReader(body))
 		if err != nil {
 			return err
 		}
@@ -103,36 +110,53 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 		return core.RawResponse{}, err
 	}
 
-	out := core.RawResponse{Content: rr.OutputText}
-	if len(rr.ToolCalls) > 0 {
-		out.ToolCalls = make([]core.ToolCall, len(rr.ToolCalls))
-		for i, tc := range rr.ToolCalls {
-			out.ToolCalls[i] = core.ToolCall{Name: tc.Name, Args: tc.Args}
+	out := core.RawResponse{}
+	if len(rr.Choices) > 0 {
+		msg := rr.Choices[0].Message
+		if len(msg.ToolCalls) > 0 {
+			out.ToolCalls = make([]core.ToolCall, len(msg.ToolCalls))
+			for i, tc := range msg.ToolCalls {
+				out.ToolCalls[i] = core.ToolCall{Name: tc.Function.Name, Args: json.RawMessage(tc.Function.Arguments)}
+			}
+		} else {
+			switch v := msg.Content.(type) {
+			case string:
+				out.Content = v
+			case []any:
+				// concatenate text parts
+				var acc string
+				for _, p := range v {
+					if m, ok := p.(map[string]any); ok {
+						if m["type"] == "text" {
+							if s, ok2 := m["text"].(string); ok2 {
+								if acc == "" {
+									acc = s
+								} else {
+									acc += "\n" + s
+								}
+							}
+						}
+					}
+				}
+				out.Content = acc
+			default:
+				out.Content = ""
+			}
 		}
 	}
-	out.Usage = core.Usage{
-		PromptTokens:     rr.Usage.PromptTokens,
-		CompletionTokens: rr.Usage.CompletionTokens,
-		TotalTokens:      rr.Usage.TotalTokens,
-	}
+	out.Usage = core.Usage{PromptTokens: rr.Usage.PromptTokens, CompletionTokens: rr.Usage.CompletionTokens, TotalTokens: rr.Usage.TotalTokens}
 	return out, nil
 }
 
-func mapMessages(msgs []core.Message) []map[string]any {
+func mapChatMessages(msgs []core.Message) []map[string]any {
 	out := make([]map[string]any, 0, len(msgs))
 	for _, m := range msgs {
 		content := []any{}
 		if m.Content != "" {
-			content = append(content, map[string]any{
-				"type": "text",
-				"text": m.Content,
-			})
+			content = append(content, map[string]any{"type": "text", "text": m.Content})
 		}
 		for _, img := range m.Images {
-			content = append(content, map[string]any{
-				"type":  "input_image",
-				"image": map[string]any{"url": img},
-			})
+			content = append(content, map[string]any{"type": "image_url", "image_url": map[string]any{"url": img}})
 		}
 		out = append(out, map[string]any{
 			"role":    m.Role,
@@ -145,16 +169,36 @@ func mapMessages(msgs []core.Message) []map[string]any {
 func mapTools(defs []core.ToolDef) []map[string]any {
 	out := make([]map[string]any, len(defs))
 	for i, d := range defs {
+		params := coerceOpenAIParams(d.JSONSchema)
 		out[i] = map[string]any{
 			"type": "function",
 			"function": map[string]any{
 				"name":        d.Name,
 				"description": d.Description,
-				"parameters":  json.RawMessage(d.JSONSchema),
+				"parameters":  params,
 			},
 		}
 	}
 	return out
+}
+
+// coerceOpenAIParams ensures the parameters JSON meets Chat Completions expectations
+// for a function JSON Schema (must be type: object at top-level).
+func coerceOpenAIParams(schema string) any {
+	var m map[string]any
+	if err := json.Unmarshal([]byte(schema), &m); err != nil {
+		return map[string]any{"type": "object", "properties": map[string]any{}}
+	}
+	if t, ok := m["type"].(string); !ok || t == "" || t == "null" {
+		m["type"] = "object"
+	}
+	if m["type"] != "object" {
+		m["type"] = "object"
+	}
+	if _, ok := m["properties"]; !ok {
+		m["properties"] = map[string]any{}
+	}
+	return m
 }
 
 // withRetry performs exponential backoff retries on transient errors.

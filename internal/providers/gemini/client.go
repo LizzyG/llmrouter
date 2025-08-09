@@ -29,6 +29,7 @@ func New(mc config.ModelConfig, hc *http.Client, logger *slog.Logger) *Client {
 type generateRequest struct {
 	Contents         []map[string]any `json:"contents"`
 	Tools            []map[string]any `json:"tools,omitempty"`
+	ToolConfig       map[string]any   `json:"toolConfig,omitempty"`
 	GenerationConfig map[string]any   `json:"generationConfig,omitempty"`
 }
 
@@ -36,7 +37,8 @@ type generateResponse struct {
 	Candidates []struct {
 		Content struct {
 			Parts []struct {
-				Text string `json:"text"`
+				Text         string         `json:"text"`
+				FunctionCall map[string]any `json:"functionCall"`
 			} `json:"parts"`
 		} `json:"content"`
 	} `json:"candidates"`
@@ -64,6 +66,16 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 	}
 	if len(params.ToolDefs) > 0 {
 		payload.Tools = mapTools(params.ToolDefs)
+		// Encourage the model to use at least one function
+		payload.ToolConfig = map[string]any{
+			"functionCallingConfig": map[string]any{
+				"mode": "ANY",
+			},
+		}
+	}
+	if params.OutputSchema != "" {
+		payload.GenerationConfig["responseMimeType"] = "application/json"
+		payload.GenerationConfig["responseSchema"] = convertJSONSchemaToGemini(params.OutputSchema)
 	}
 
 	body, _ := json.Marshal(payload)
@@ -92,11 +104,42 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 		return core.RawResponse{}, err
 	}
 
-	content := ""
+	out := core.RawResponse{}
 	if len(gr.Candidates) > 0 && len(gr.Candidates[0].Content.Parts) > 0 {
-		content = gr.Candidates[0].Content.Parts[0].Text
+		parts := gr.Candidates[0].Content.Parts
+		// If model requested function calls, surface them
+		toolCalls := make([]core.ToolCall, 0)
+		for _, p := range parts {
+			if fc, ok := p.FunctionCall["name"].(string); ok && fc != "" {
+				// Extract args map
+				var raw json.RawMessage
+				if args, ok2 := p.FunctionCall["args"].(map[string]any); ok2 {
+					b, _ := json.Marshal(args)
+					raw = b
+				} else if anyArgs, ok3 := p.FunctionCall["args"].(any); ok3 {
+					b, _ := json.Marshal(anyArgs)
+					raw = b
+				}
+				toolCalls = append(toolCalls, core.ToolCall{Name: fc, Args: raw})
+			}
+		}
+		if len(toolCalls) > 0 {
+			out.ToolCalls = toolCalls
+		} else {
+			// Aggregate text content
+			acc := ""
+			for _, p := range parts {
+				if p.Text != "" {
+					if acc == "" {
+						acc = p.Text
+					} else {
+						acc += "\n" + p.Text
+					}
+				}
+			}
+			out.Content = acc
+		}
 	}
-	out := core.RawResponse{Content: content}
 	out.Usage = core.Usage{
 		PromptTokens:     gr.Usage.PromptTokenCount,
 		CompletionTokens: gr.Usage.CandidatesTokenCount,
@@ -110,7 +153,26 @@ func mapMessages(msgs []core.Message) []map[string]any {
 	for _, m := range msgs {
 		parts := []any{}
 		if m.Content != "" {
-			parts = append(parts, map[string]any{"text": m.Content})
+			// Try to interpret assistant tool results (formatToolResult JSON) as functionResponse
+			if m.Role == "assistant" {
+				var obj map[string]any
+				if json.Unmarshal([]byte(m.Content), &obj) == nil {
+					if toolName, ok := obj["tool"].(string); ok {
+						parts = append(parts, map[string]any{
+							"functionResponse": map[string]any{
+								"name":     toolName,
+								"response": obj["result"],
+							},
+						})
+					} else {
+						parts = append(parts, map[string]any{"text": m.Content})
+					}
+				} else {
+					parts = append(parts, map[string]any{"text": m.Content})
+				}
+			} else {
+				parts = append(parts, map[string]any{"text": m.Content})
+			}
 		}
 		for _, img := range m.Images {
 			parts = append(parts, map[string]any{
@@ -120,29 +182,88 @@ func mapMessages(msgs []core.Message) []map[string]any {
 				},
 			})
 		}
-		out = append(out, map[string]any{
-			"role":  m.Role,
-			"parts": parts,
-		})
+		role := m.Role
+		// When sending functionResponse, Gemini expects role "tool"
+		if len(parts) > 0 {
+			if mr, ok := parts[0].(map[string]any); ok {
+				if _, hasFR := mr["functionResponse"]; hasFR {
+					role = "tool"
+				}
+			}
+		}
+		out = append(out, map[string]any{"role": role, "parts": parts})
 	}
 	return out
 }
 
 func mapTools(defs []core.ToolDef) []map[string]any {
-	// Minimal placeholder; adjust when enabling Gemini tools formally
 	out := make([]map[string]any, len(defs))
 	for i, d := range defs {
+		params := convertJSONSchemaToGemini(d.JSONSchema)
 		out[i] = map[string]any{
 			"function_declarations": []map[string]any{
 				{
 					"name":        d.Name,
 					"description": d.Description,
-					"parameters":  json.RawMessage(d.JSONSchema),
+					"parameters":  params,
 				},
 			},
 		}
 	}
 	return out
+}
+
+// convertJSONSchemaToGemini transforms a standard JSON Schema into Gemini's schema dialect.
+// Gemini expects:
+// { type: OBJECT|ARRAY|STRING|INTEGER|NUMBER|BOOLEAN, properties?: {...}, items?: {...} }
+func convertJSONSchemaToGemini(schema string) any {
+	var m map[string]any
+	if err := json.Unmarshal([]byte(schema), &m); err != nil {
+		return map[string]any{"type": "OBJECT", "properties": map[string]any{}}
+	}
+	return toGeminiSchema(m)
+}
+
+func toGeminiSchema(node map[string]any) map[string]any {
+	// Strip meta keys
+	delete(node, "$schema")
+	delete(node, "$id")
+	delete(node, "$defs")
+	delete(node, "definitions")
+	delete(node, "$ref")
+	delete(node, "title")
+	delete(node, "description")
+	delete(node, "additionalProperties")
+
+	t, _ := node["type"].(string)
+	switch t {
+	case "string":
+		return map[string]any{"type": "STRING"}
+	case "integer":
+		return map[string]any{"type": "INTEGER"}
+	case "number":
+		return map[string]any{"type": "NUMBER"}
+	case "boolean":
+		return map[string]any{"type": "BOOLEAN"}
+	case "array":
+		items := map[string]any{}
+		if it, ok := node["items"].(map[string]any); ok {
+			items = toGeminiSchema(it)
+		}
+		return map[string]any{"type": "ARRAY", "items": items}
+	case "object", "OBJECT", "":
+		propsOut := map[string]any{}
+		if props, ok := node["properties"].(map[string]any); ok {
+			for k, v := range props {
+				if child, ok2 := v.(map[string]any); ok2 {
+					propsOut[k] = toGeminiSchema(child)
+				}
+			}
+		}
+		return map[string]any{"type": "OBJECT", "properties": propsOut}
+	default:
+		return map[string]any{"type": "OBJECT", "properties": map[string]any{}}
+	}
 }
 
 func withRetry(ctx context.Context, fn func() error) error {

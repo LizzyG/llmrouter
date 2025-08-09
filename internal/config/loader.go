@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/knadh/koanf/parsers/yaml"
 	kenv "github.com/knadh/koanf/providers/env"
 	kfile "github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
@@ -30,6 +31,7 @@ type ModelConfig struct {
 var (
 	loadOnce sync.Once
 	loaded   *LLMConfig
+	loadErr  error
 )
 
 // Load loads configuration from path or default locations. Load is safe for repeated calls.
@@ -38,7 +40,6 @@ var (
 // 1. LLM_CONFIG_PATH if set
 // 2. ./config.yaml
 func Load() (*LLMConfig, error) {
-	var loadErr error
 	loadOnce.Do(func() {
 		k := koanf.New(".")
 
@@ -48,8 +49,8 @@ func Load() (*LLMConfig, error) {
 			path = "config.yaml"
 		}
 
-		// Load file
-		if err := k.Load(kfile.Provider(path), nil); err != nil {
+		// Load file with YAML parser
+		if err := k.Load(kfile.Provider(path), yaml.Parser()); err != nil {
 			loadErr = err
 			return
 		}

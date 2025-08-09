@@ -28,6 +28,34 @@ type Client interface {
 // If T is string, the raw text is returned.
 func Execute[T any](ctx context.Context, c Client, req Request) (T, error) {
 	var zero T
+	// If the client can use an output schema, leverage it for stricter results.
+	type schemaExec interface {
+		executeWithSchema(ctx context.Context, req Request, outputSchema string, requireStructured bool) (string, error)
+	}
+	if se, ok := c.(schemaExec); ok {
+		// Build schema for T
+		var zeroPtr *T
+		schema := util.GenerateJSONSchema(zeroPtr)
+		s, err := se.executeWithSchema(ctx, req, schema, true)
+		if err != nil {
+			return zero, err
+		}
+		if util.IsStringType[T]() {
+			anyVal := any(s)
+			return anyVal.(T), nil
+		}
+		var out T
+		if err := json.Unmarshal([]byte(s), &out); err != nil {
+			if repaired, ok := util.RepairJSON(s); ok {
+				if err2 := json.Unmarshal([]byte(repaired), &out); err2 == nil {
+					return out, nil
+				}
+			}
+			return zero, moderr.ErrStructuredOutput
+		}
+		return out, nil
+	}
+
 	s, err := c.ExecuteRaw(ctx, req)
 	if err != nil {
 		return zero, err

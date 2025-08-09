@@ -84,12 +84,12 @@ func (r *router) ExecuteRaw(ctx context.Context, req Request) (string, error) {
 		defs[i] = ToolDef{
 			Name:        t.Name(),
 			Description: t.Description(),
-			JSONSchema:  util.GenerateJSONSchema(t.Parameters()),
+			JSONSchema:  util.GenerateToolJSONSchema(t.Parameters()),
 		}
 	}
 
-	// If provider supports structured output, build schema for T
-	var outputSchema string // left empty here; typed helper uses executeWithSchema
+	// carry any explicit schema provided by typed helper for providers that support it
+	var outputSchema string
 
 	conversation := req.Messages
 	maxTurns := r.maxToolTurns
@@ -277,6 +277,9 @@ func (r *router) executeWithSchema(ctx context.Context, req Request, outputSchem
 	// Only pass schema through if provider supports it; otherwise leave empty and we will parse/repair after.
 	if !mc.SupportsStructuredOutput {
 		outputSchema = ""
+	} else {
+		// For providers that are picky (e.g., Gemini), sanitize provided schema string
+		outputSchema = util.SanitizeResponseSchemaJSON(outputSchema)
 	}
 
 	conversation := req.Messages
