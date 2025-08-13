@@ -195,9 +195,11 @@ func (r *router) executeInternal(ctx context.Context, req Request, outputSchema 
 						"args": args,
 					})
 				}
-				if b, err := json.Marshal(fcList); err == nil {
-					conversation = append(conversation, Message{Role: RoleAssistant, Content: string(b)})
-				}
+            if b, err := json.Marshal(fcList); err == nil {
+                conversation = append(conversation, Message{Role: RoleAssistant, Content: string(b)})
+            } else {
+                return "", true, err
+            }
 			}
 
 			// EXECUTE TOOLS sequentially and collect all results
@@ -232,8 +234,11 @@ func (r *router) executeInternal(ctx context.Context, req Request, outputSchema 
 			// Add all tool results as a single assistant message
 			if len(toolResults) > 0 {
 				// Format multiple tool results as a JSON array for consistent parsing
-				b, _ := json.Marshal(toolResults)
-				if os.Getenv("LLM_VERBOSE_MESSAGES") == "1" {
+            b, err := json.Marshal(toolResults)
+            if err != nil {
+                return "", true, err
+            }
+            if os.Getenv("LLM_VERBOSE_MESSAGES") == "1" {
 					r.logger.Info("combined tool results",
 						slog.Int("count", len(toolResults)),
 						slog.String("content", string(b)),
