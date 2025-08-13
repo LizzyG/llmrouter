@@ -40,26 +40,21 @@ func Execute[T any](ctx context.Context, c Client, req Request) (T, error) {
 		if err != nil {
 			return zero, err
 		}
-		if util.IsStringType[T]() {
-			anyVal := any(s)
-			return anyVal.(T), nil
-		}
-		var out T
-		if err := json.Unmarshal([]byte(s), &out); err != nil {
-			if repaired, ok := util.RepairJSON(s); ok {
-				if err2 := json.Unmarshal([]byte(repaired), &out); err2 == nil {
-					return out, nil
-				}
-			}
-			return zero, moderr.ErrStructuredOutput
-		}
-		return out, nil
+		return parseResult[T](s)
 	}
 
 	s, err := c.ExecuteRaw(ctx, req)
 	if err != nil {
 		return zero, err
 	}
+	return parseResult[T](s)
+}
+
+// parseResult parses the model's final content string into T.
+// If T is string, it returns the raw content. Otherwise it attempts JSON unmarshal,
+// and on failure tries a lightweight RepairJSON before returning ErrStructuredOutput.
+func parseResult[T any](s string) (T, error) {
+	var zero T
 	if util.IsStringType[T]() {
 		anyVal := any(s)
 		return anyVal.(T), nil
