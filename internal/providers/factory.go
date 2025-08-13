@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	moderr "github.com/lizzyg/llmrouter/errors"
 	"github.com/lizzyg/llmrouter/internal/config"
 	"github.com/lizzyg/llmrouter/internal/core"
 	"github.com/lizzyg/llmrouter/internal/providers/gemini"
@@ -17,6 +18,6 @@ func NewProviderClient(mc config.ModelConfig, hc *http.Client, logger *slog.Logg
 	case "gemini":
 		return gemini.New(mc, hc, logger), nil
 	default:
-		return nil, nil
+		return nil, moderr.ErrNoMatchingModel
 	}
 }
