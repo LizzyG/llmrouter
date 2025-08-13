@@ -313,13 +313,7 @@ func (r *router) selectModel(req Request) (config.ModelConfig, string, error) {
 	return config.ModelConfig{}, "", moderr.ErrNoMatchingModel
 }
 
-func formatToolResult(name string, output any) string {
-	b, _ := json.Marshal(map[string]any{
-		"tool":   name,
-		"result": output,
-	})
-	return string(b)
-}
+// formatToolResult was unused; removed to avoid dead code
 
 func findTool(tools []Tool, name string) Tool {
 	for _, t := range tools {
