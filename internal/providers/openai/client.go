@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"net"
 	"net/http"
 	"time"
 
@@ -83,10 +84,13 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 		payload.ResponseFormat = map[string]any{"type": "json_object"}
 	}
 
-	body, _ := json.Marshal(payload)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return core.RawResponse{}, fmt.Errorf("openai marshal payload: %w", err)
+	}
 
 	var rr chatResponse
-	err := c.withRetry(ctx, func() error {
+	err = c.withRetry(ctx, func() error {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.openai.com/v1/chat/completions", bytes.NewReader(body))
 		if err != nil {
 			return err
@@ -101,7 +105,7 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 		defer resp.Body.Close()
 		if resp.StatusCode >= 400 {
 			b, _ := io.ReadAll(resp.Body)
-			return fmt.Errorf("openai http %d: %s", resp.StatusCode, string(b))
+			return &httpStatusError{status: resp.StatusCode, body: string(b)}
 		}
 		dec := json.NewDecoder(resp.Body)
 		return dec.Decode(&rr)
@@ -216,8 +220,7 @@ func (c *Client) withRetry(ctx context.Context, fn func() error) error {
 		if err == nil {
 			return nil
 		}
-		var netErr *netError
-		if !transient(err) && !errors.As(err, &netErr) {
+		if !isTransient(err) {
 			return err
 		}
 		attempt++
@@ -237,12 +240,32 @@ func (c *Client) withRetry(ctx context.Context, fn func() error) error {
 	}
 }
 
-// netError is used only for errors.As matching when needed.
-type netError struct{ error }
+// httpStatusError wraps HTTP status codes to enable retry decisions.
+type httpStatusError struct {
+	status int
+	body   string
+}
 
-func transient(err error) bool {
-	// Very basic heuristic: HTTP status already handled; here we can extend if needed.
-	// Keep simple for v1.
-	_ = err
-	return true
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("openai http %d: %s", e.status, e.body)
+}
+
+// isTransient determines if an error is worth retrying.
+func isTransient(err error) bool {
+	// Retry on 429 or 5xx
+	var he *httpStatusError
+	if errors.As(err, &he) {
+		if he.status == 429 || he.status >= 500 {
+			return true
+		}
+		return false
+	}
+	// Retry on network timeouts
+	var ne net.Error
+	if errors.As(err, &ne) {
+		if ne.Timeout() {
+			return true
+		}
+	}
+	return false
 }
