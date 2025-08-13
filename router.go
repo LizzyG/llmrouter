@@ -135,113 +135,119 @@ func (r *router) executeInternal(ctx context.Context, req Request, outputSchema 
 		maxTurns = 3
 	}
 	for turn := 0; turn < maxTurns; turn++ {
-		// Respect per-request timeout if provided
-		callCtx := ctx
-		var cancel context.CancelFunc
-		if req.Timeout > 0 {
-			callCtx, cancel = context.WithTimeout(ctx, req.Timeout)
-			defer cancel()
-		}
-		if os.Getenv("LLM_VERBOSE_MESSAGES") == "1" {
-			r.logger.Info("outgoing messages",
+		result, done, err := func() (string, bool, error) {
+			// Respect per-request timeout if provided
+			callCtx := ctx
+			var cancel context.CancelFunc
+			if req.Timeout > 0 {
+				callCtx, cancel = context.WithTimeout(ctx, req.Timeout)
+				defer cancel()
+			}
+			if os.Getenv("LLM_VERBOSE_MESSAGES") == "1" {
+				r.logger.Info("outgoing messages",
+					slog.String("provider", mc.Provider),
+					slog.String("model", mc.Model),
+					slog.Any("messages", conversation),
+					slog.Any("tools", defs),
+				)
+			}
+			start := time.Now()
+			resp, callErr := rc.Call(callCtx, CallParams{
+				Model:        mc.Model,
+				Messages:     mapMessages(conversation),
+				ToolDefs:     defs,
+				OutputSchema: outputSchema,
+				MaxTokens:    boundedInt(req.MaxTokens, mc.MaxOutputTokens),
+				Temperature:  req.Temperature,
+				TopP:         req.TopP,
+			})
+			duration := time.Since(start)
+
+			r.logger.Info("llm call",
 				slog.String("provider", mc.Provider),
 				slog.String("model", mc.Model),
-				slog.Any("messages", conversation),
-				slog.Any("tools", defs),
+				slog.String("model_key", modelKey),
+				slog.Int("prompt_tokens", resp.Usage.PromptTokens),
+				slog.Int("completion_tokens", resp.Usage.CompletionTokens),
+				slog.Int("total_tokens", resp.Usage.TotalTokens),
+				slog.Duration("latency_ms", duration),
+				slog.Bool("error", callErr != nil),
 			)
-		}
-		start := time.Now()
-		resp, callErr := rc.Call(callCtx, CallParams{
-			Model:        mc.Model,
-			Messages:     mapMessages(conversation),
-			ToolDefs:     defs,
-			OutputSchema: outputSchema,
-			MaxTokens:    boundedInt(req.MaxTokens, mc.MaxOutputTokens),
-			Temperature:  req.Temperature,
-			TopP:         req.TopP,
-		})
-		duration := time.Since(start)
 
-		r.logger.Info("llm call",
-			slog.String("provider", mc.Provider),
-			slog.String("model", mc.Model),
-			slog.String("model_key", modelKey),
-			slog.Int("prompt_tokens", resp.Usage.PromptTokens),
-			slog.Int("completion_tokens", resp.Usage.CompletionTokens),
-			slog.Int("total_tokens", resp.Usage.TotalTokens),
-			slog.Duration("latency_ms", duration),
-			slog.Bool("error", callErr != nil),
-		)
+			if callErr != nil {
+				return "", true, callErr
+			}
 
-		if callErr != nil {
-			return "", callErr
-		}
+			// STOP: No tool call → Final answer
+			if len(resp.ToolCalls) == 0 {
+				return resp.Content, true, nil
+			}
 
-		// STOP: No tool call → Final answer
-		if len(resp.ToolCalls) == 0 {
-			return resp.Content, nil
-		}
+			// Surface the model's function calls back into the conversation so
+			// provider adapters like Gemini can pair them with subsequent tool responses.
+			if len(resp.ToolCalls) > 0 {
+				fcList := make([]map[string]any, 0, len(resp.ToolCalls))
+				for _, tc := range resp.ToolCalls {
+					var args any
+					_ = json.Unmarshal(tc.Args, &args)
+					fcList = append(fcList, map[string]any{
+						"tool": tc.Name,
+						"args": args,
+					})
+				}
+				if b, err := json.Marshal(fcList); err == nil {
+					conversation = append(conversation, Message{Role: RoleAssistant, Content: string(b)})
+				}
+			}
 
-		// Surface the model's function calls back into the conversation so
-		// provider adapters like Gemini can pair them with subsequent tool responses.
-		if len(resp.ToolCalls) > 0 {
-			fcList := make([]map[string]any, 0, len(resp.ToolCalls))
+			// EXECUTE TOOLS sequentially and collect all results
+			var toolResults []map[string]any
 			for _, tc := range resp.ToolCalls {
-				var args any
-				_ = json.Unmarshal(tc.Args, &args)
-				fcList = append(fcList, map[string]any{
-					"tool": tc.Name,
-					"args": args,
+				tool := findTool(req.Tools, tc.Name)
+				if tool == nil {
+					return "", true, moderr.ErrUnknownTool
+				}
+				argStruct := tool.Parameters()
+				if err := json.Unmarshal(tc.Args, argStruct); err != nil {
+					return "", true, err
+				}
+				output, err := tool.Execute(callCtx, argStruct)
+				if err != nil {
+					return "", true, err
+				}
+				if os.Getenv("LLM_VERBOSE_MESSAGES") == "1" {
+					r.logger.Info("tool executed",
+						slog.String("tool", tc.Name),
+						slog.Any("args", argStruct),
+						slog.Any("output", output),
+					)
+				}
+				// Store tool results in a format that Gemini can parse as functionResponse
+				toolResults = append(toolResults, map[string]any{
+					"tool":   tc.Name,
+					"result": output,
 				})
 			}
-			if b, err := json.Marshal(fcList); err == nil {
-				conversation = append(conversation, Message{Role: RoleAssistant, Content: string(b)})
-			}
-		}
 
-		// EXECUTE TOOLS sequentially and collect all results
-		var toolResults []map[string]any
-		for _, tc := range resp.ToolCalls {
-			tool := findTool(req.Tools, tc.Name)
-			if tool == nil {
-				return "", moderr.ErrUnknownTool
+			// Add all tool results as a single assistant message
+			if len(toolResults) > 0 {
+				// Format multiple tool results as a JSON array for consistent parsing
+				b, _ := json.Marshal(toolResults)
+				if os.Getenv("LLM_VERBOSE_MESSAGES") == "1" {
+					r.logger.Info("combined tool results",
+						slog.Int("count", len(toolResults)),
+						slog.String("content", string(b)),
+					)
+				}
+				conversation = append(conversation, Message{
+					Role:    RoleAssistant,
+					Content: string(b),
+				})
 			}
-			argStruct := tool.Parameters()
-			if err := json.Unmarshal(tc.Args, argStruct); err != nil {
-				return "", err
-			}
-			output, err := tool.Execute(ctx, argStruct)
-			if err != nil {
-				return "", err
-			}
-			if os.Getenv("LLM_VERBOSE_MESSAGES") == "1" {
-				r.logger.Info("tool executed",
-					slog.String("tool", tc.Name),
-					slog.Any("args", argStruct),
-					slog.Any("output", output),
-				)
-			}
-			// Store tool results in a format that Gemini can parse as functionResponse
-			toolResults = append(toolResults, map[string]any{
-				"tool":   tc.Name,
-				"result": output,
-			})
-		}
-
-		// Add all tool results as a single assistant message
-		if len(toolResults) > 0 {
-			// Format multiple tool results as a JSON array for consistent parsing
-			b, _ := json.Marshal(toolResults)
-			if os.Getenv("LLM_VERBOSE_MESSAGES") == "1" {
-				r.logger.Info("combined tool results",
-					slog.Int("count", len(toolResults)),
-					slog.String("content", string(b)),
-				)
-			}
-			conversation = append(conversation, Message{
-				Role:    RoleAssistant,
-				Content: string(b),
-			})
+			return "", false, nil
+		}()
+		if done {
+			return result, err
 		}
 	}
 	return "", moderr.ErrMaxToolTurns
