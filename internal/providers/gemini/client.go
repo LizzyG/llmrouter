@@ -121,14 +121,17 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 		payload.GenerationConfig["responseSchema"] = convertJSONSchemaToGemini(params.OutputSchema)
 	}
 
-	body, _ := json.Marshal(payload)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return core.RawResponse{}, fmt.Errorf("gemini marshal payload: %w", err)
+	}
 	if os.Getenv("LLM_VERBOSE_MESSAGES") == "1" {
 		c.logger.Info("gemini request payload", "payload", string(body))
 	}
 	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", c.model, c.apiKey)
 
 	var gr generateResponse
-	err := withRetry(ctx, func() error {
+	err = withRetry(ctx, func() error {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if err != nil {
 			return err
