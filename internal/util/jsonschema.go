@@ -35,60 +35,8 @@ func GenerateToolJSONSchema(obj any) string {
 		return `{"type":"object","properties":{}}`
 	}
 
-	// Try to inline $ref if present (same logic as GenerateResponseJSONSchema)
-	if ref, ok := m["$ref"].(string); ok && ref != "" {
-		var defsKey string
-		if _, ok := m["$defs"]; ok {
-			defsKey = "$defs"
-		} else if _, ok := m["definitions"]; ok {
-			defsKey = "definitions"
-		}
-		if defsKey != "" {
-			if defs, ok := m[defsKey].(map[string]any); ok {
-				// Extract name after last '/'
-				lastSlash := -1
-				for i := len(ref) - 1; i >= 0; i-- {
-					if ref[i] == '/' {
-						lastSlash = i
-						break
-					}
-				}
-				if lastSlash >= 0 && lastSlash+1 < len(ref) {
-					name := ref[lastSlash+1:]
-					if target, ok := defs[name].(map[string]any); ok {
-						// Replace root with target schema
-						for k := range m {
-							delete(m, k)
-						}
-						for k, v := range target {
-							m[k] = v
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Remove meta keys
-	delete(m, "$schema")
-	delete(m, "$id")
-	delete(m, "$defs")
-	delete(m, "definitions")
-	delete(m, "$ref")
-	delete(m, "title")
-	delete(m, "description")
-	delete(m, "additionalProperties")
-	// Ensure type object
-	if _, ok := m["type"]; !ok {
-		m["type"] = "object"
-	}
-	if m["type"] != "object" {
-		m["type"] = "object"
-	}
-	// Ensure properties map exists
-	if _, ok := m["properties"]; !ok {
-		m["properties"] = map[string]any{}
-	}
+	inlineTopLevelRef(m)
+	sanitizeMetaAndCoerceObject(m, true)
 	b, _ := json.Marshal(m)
 	return string(b)
 }
@@ -102,57 +50,9 @@ func GenerateResponseJSONSchema(obj any) string {
 	if err := json.Unmarshal([]byte(raw), &m); err != nil {
 		return `{"type":"object","properties":{}}`
 	}
-	// Try to inline $ref
-	if ref, ok := m["$ref"].(string); ok && ref != "" {
-		// Supported pattern: "#/$defs/TypeName" or "#/definitions/TypeName"
-		var defsKey string
-		if _, ok := m["$defs"]; ok {
-			defsKey = "$defs"
-		} else if _, ok := m["definitions"]; ok {
-			defsKey = "definitions"
-		}
-		if defsKey != "" {
-			if defs, ok := m[defsKey].(map[string]any); ok {
-				// Extract name after last '/'
-				lastSlash := -1
-				for i := len(ref) - 1; i >= 0; i-- {
-					if ref[i] == '/' {
-						lastSlash = i
-						break
-					}
-				}
-				if lastSlash >= 0 && lastSlash+1 < len(ref) {
-					name := ref[lastSlash+1:]
-					if target, ok := defs[name].(map[string]any); ok {
-						// Replace root with target schema
-						for k := range m {
-							delete(m, k)
-						}
-						for k, v := range target {
-							m[k] = v
-						}
-					}
-				}
-			}
-		}
-	}
-	// Remove meta keys
-	delete(m, "$schema")
-	delete(m, "$id")
-	delete(m, "$defs")
-	delete(m, "definitions")
-	delete(m, "$ref")
-	delete(m, "title")
-	delete(m, "description")
-	if t, ok := m["type"].(string); !ok || t == "" || t == "null" {
-		m["type"] = "object"
-	}
-	if m["type"] != "object" {
-		m["type"] = "object"
-	}
-	if _, ok := m["properties"]; !ok {
-		m["properties"] = map[string]any{}
-	}
+
+	inlineTopLevelRef(m)
+	sanitizeMetaAndCoerceObject(m, false)
 	b, _ := json.Marshal(m)
 	return string(b)
 }
@@ -164,37 +64,58 @@ func SanitizeResponseSchemaJSON(schemaStr string) string {
 	if err := json.Unmarshal([]byte(schemaStr), &m); err != nil {
 		return `{"type":"object","properties":{}}`
 	}
-	// Inline $ref if present
-	if ref, ok := m["$ref"].(string); ok && ref != "" {
-		var defsKey string
-		if _, ok := m["$defs"]; ok {
-			defsKey = "$defs"
-		} else if _, ok := m["definitions"]; ok {
-			defsKey = "definitions"
-		}
-		if defsKey != "" {
-			if defs, ok := m[defsKey].(map[string]any); ok {
-				lastSlash := -1
-				for i := len(ref) - 1; i >= 0; i-- {
-					if ref[i] == '/' {
-						lastSlash = i
-						break
-					}
-				}
-				if lastSlash >= 0 && lastSlash+1 < len(ref) {
-					name := ref[lastSlash+1:]
-					if target, ok := defs[name].(map[string]any); ok {
-						for k := range m {
-							delete(m, k)
-						}
-						for k, v := range target {
-							m[k] = v
-						}
-					}
-				}
-			}
+
+	inlineTopLevelRef(m)
+	sanitizeMetaAndCoerceObject(m, false)
+	b, _ := json.Marshal(m)
+	return string(b)
+}
+
+// inlineTopLevelRef attempts to inline a top-level $ref pointing to a definition under $defs or definitions.
+// It mutates the provided map in place, replacing the root with the referenced schema when possible.
+func inlineTopLevelRef(m map[string]any) {
+	ref, ok := m["$ref"].(string)
+	if !ok || ref == "" {
+		return
+	}
+	var defsKey string
+	if _, ok := m["$defs"]; ok {
+		defsKey = "$defs"
+	} else if _, ok := m["definitions"]; ok {
+		defsKey = "definitions"
+	}
+	if defsKey == "" {
+		return
+	}
+	defs, ok := m[defsKey].(map[string]any)
+	if !ok {
+		return
+	}
+	lastSlash := -1
+	for i := len(ref) - 1; i >= 0; i-- {
+		if ref[i] == '/' {
+			lastSlash = i
+			break
 		}
 	}
+	if lastSlash < 0 || lastSlash+1 >= len(ref) {
+		return
+	}
+	name := ref[lastSlash+1:]
+	if target, ok := defs[name].(map[string]any); ok {
+		for k := range m {
+			delete(m, k)
+		}
+		for k, v := range target {
+			m[k] = v
+		}
+	}
+}
+
+// sanitizeMetaAndCoerceObject removes schema meta keys providers may reject and ensures
+// the root is a concrete object with a properties map. If dropAdditionalProps is true,
+// it also removes additionalProperties.
+func sanitizeMetaAndCoerceObject(m map[string]any, dropAdditionalProps bool) {
 	delete(m, "$schema")
 	delete(m, "$id")
 	delete(m, "$defs")
@@ -202,6 +123,9 @@ func SanitizeResponseSchemaJSON(schemaStr string) string {
 	delete(m, "$ref")
 	delete(m, "title")
 	delete(m, "description")
+	if dropAdditionalProps {
+		delete(m, "additionalProperties")
+	}
 	if t, ok := m["type"].(string); !ok || t == "" || t == "null" {
 		m["type"] = "object"
 	}
@@ -211,6 +135,4 @@ func SanitizeResponseSchemaJSON(schemaStr string) string {
 	if _, ok := m["properties"]; !ok {
 		m["properties"] = map[string]any{}
 	}
-	b, _ := json.Marshal(m)
-	return string(b)
 }
