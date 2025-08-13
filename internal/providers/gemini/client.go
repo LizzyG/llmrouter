@@ -28,10 +28,11 @@ func New(mc config.ModelConfig, hc *http.Client, logger *slog.Logger) *Client {
 }
 
 type generateRequest struct {
-	Contents         []map[string]any `json:"contents"`
-	Tools            []map[string]any `json:"tools,omitempty"`
-	ToolConfig       map[string]any   `json:"toolConfig,omitempty"`
-	GenerationConfig map[string]any   `json:"generationConfig,omitempty"`
+	Contents          []map[string]any `json:"contents"`
+	Tools             []map[string]any `json:"tools,omitempty"`
+	ToolConfig        map[string]any   `json:"toolConfig,omitempty"`
+	GenerationConfig  map[string]any   `json:"generationConfig,omitempty"`
+	SystemInstruction map[string]any   `json:"systemInstruction,omitempty"`
 }
 
 type generateResponse struct {
@@ -52,9 +53,32 @@ type generateResponse struct {
 }
 
 func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResponse, error) {
+	// Split out system messages to use systemInstruction per Gemini API
+	sysMsgs := make([]core.Message, 0)
+	nonSys := make([]core.Message, 0, len(params.Messages))
+	for _, m := range params.Messages {
+		if m.Role == "system" {
+			sysMsgs = append(sysMsgs, m)
+			continue
+		}
+		nonSys = append(nonSys, m)
+	}
+
 	payload := generateRequest{
-		Contents:         mapMessages(params.Messages),
-		GenerationConfig: map[string]any{},
+		Contents:          mapMessages(nonSys),
+		GenerationConfig:  map[string]any{},
+		SystemInstruction: nil,
+	}
+	if len(sysMsgs) > 0 {
+		parts := make([]map[string]any, 0, len(sysMsgs))
+		for _, sm := range sysMsgs {
+			if sm.Content != "" {
+				parts = append(parts, map[string]any{"text": sm.Content})
+			}
+		}
+		if len(parts) > 0 {
+			payload.SystemInstruction = map[string]any{"parts": parts}
+		}
 	}
 	if params.MaxTokens > 0 {
 		payload.GenerationConfig["maxOutputTokens"] = params.MaxTokens
@@ -262,9 +286,8 @@ func mapMessages(msgs []core.Message) []map[string]any {
 		}
 		for _, img := range m.Images {
 			parts = append(parts, map[string]any{
-				"inline_data": map[string]any{
-					"mime_type": "image/url",
-					"data":      img,
+				"fileData": map[string]any{
+					"fileUri": img,
 				},
 			})
 		}
@@ -276,6 +299,10 @@ func mapMessages(msgs []core.Message) []map[string]any {
 					role = "tool"
 				}
 			}
+		}
+		// Map assistant to model as per Gemini's role names
+		if role == "assistant" {
+			role = "model"
 		}
 		out = append(out, map[string]any{"role": role, "parts": parts})
 	}
