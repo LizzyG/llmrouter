@@ -12,12 +12,12 @@ import (
 )
 
 func NewProviderClient(mc config.ModelConfig, hc *http.Client, logger *slog.Logger) (core.RawClient, error) {
-	switch mc.Provider {
+    switch mc.Provider {
 	case "openai":
 		return openai.New(mc, hc, logger), nil
 	case "gemini":
 		return gemini.New(mc, hc, logger), nil
 	default:
-		return nil, moderr.ErrNoMatchingModel
+        return nil, moderr.ErrUnknownProvider
 	}
 }
