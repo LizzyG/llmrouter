@@ -14,32 +14,7 @@ import (
 	ttools "github.com/lizzyg/llmrouter/tests/tools"
 )
 
-// Tool: GetUserLocation (no args) -> { location: "Portland, Oregon" }
-type getUserLocationTool struct{}
-type getUserLocationArgs struct{}
-
-func (t *getUserLocationTool) Name() string { return "GetUserLocation" }
-func (t *getUserLocationTool) Description() string {
-	return "Returns the user's current city and state"
-}
-func (t *getUserLocationTool) Parameters() any { return &getUserLocationArgs{} }
-func (t *getUserLocationTool) Execute(ctx context.Context, args any) (any, error) {
-	return map[string]any{"location": "Portland, Oregon"}, nil
-}
-
-// Tool: GetWeatherInLocation (args: location) -> { weather: "Sunny and mild in <location>" }
-type getWeatherTool struct{}
-type getWeatherArgs struct {
-	Location string `json:"location"`
-}
-
-func (t *getWeatherTool) Name() string        { return "GetWeatherInLocation" }
-func (t *getWeatherTool) Description() string { return "Returns current weather for a location" }
-func (t *getWeatherTool) Parameters() any     { return &getWeatherArgs{} }
-func (t *getWeatherTool) Execute(ctx context.Context, args any) (any, error) {
-	a := args.(*getWeatherArgs)
-	return map[string]any{"weather": "Sunny and mild in " + a.Location}, nil
-}
+// Tools are shared in tests/tools; reuse to avoid duplication.
 
 func TestOpenAI_ToolWorkflow_LocationThenWeather(t *testing.T) {
 	apiKey := os.Getenv("OPENAI_API_KEY")
