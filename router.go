@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	moderr "github.com/lizzyg/llmrouter/errors"
@@ -58,7 +59,7 @@ func NewRouter(cfg config.LLMConfig, opts ...Option) Client {
 		clients:      make(map[string]RawClient),
 		logger:       slog.Default(),
 		httpClient:   &http.Client{Timeout: 30 * time.Second},
-		maxToolTurns: 3,
+		maxToolTurns: 5,
 	}
 	for _, o := range opts {
 		o(r)
@@ -81,10 +82,39 @@ func (r *router) ExecuteRaw(ctx context.Context, req Request) (string, error) {
 	// Prepare tool definitions for the API
 	defs := make([]ToolDef, len(req.Tools))
 	for i, t := range req.Tools {
+		// Reflect tool parameters into a JSON schema fragment per field using invopop
+		// by leveraging util.GenerateToolJSONSchema, then convert into a parameter list.
+		schemaStr := util.GenerateToolJSONSchema(t.Parameters())
+		// Parse schema into parameter list: properties + required
+		var schema map[string]any
+		_ = json.Unmarshal([]byte(schemaStr), &schema)
+		props, _ := schema["properties"].(map[string]any)
+		reqList := map[string]bool{}
+		if reqArr, ok := schema["required"].([]any); ok {
+			for _, v := range reqArr {
+				if s, ok2 := v.(string); ok2 {
+					reqList[s] = true
+				}
+			}
+		}
+		paramList := make([]core.ToolParameter, 0, len(props))
+		for name, frag := range props {
+			var fragMap map[string]any
+			if m, ok := frag.(map[string]any); ok {
+				fragMap = m
+			} else {
+				fragMap = map[string]any{"type": "string"}
+			}
+			paramList = append(paramList, core.ToolParameter{
+				Name:     name,
+				Required: reqList[name],
+				Schema:   fragMap,
+			})
+		}
 		defs[i] = ToolDef{
 			Name:        t.Name(),
 			Description: t.Description(),
-			JSONSchema:  util.GenerateToolJSONSchema(t.Parameters()),
+			Parameters:  paramList,
 		}
 	}
 
@@ -103,6 +133,14 @@ func (r *router) ExecuteRaw(ctx context.Context, req Request) (string, error) {
 		if req.Timeout > 0 {
 			callCtx, cancel = context.WithTimeout(ctx, req.Timeout)
 			defer cancel()
+		}
+		if os.Getenv("LLM_VERBOSE_MESSAGES") == "1" {
+			r.logger.Info("outgoing messages",
+				slog.String("provider", mc.Provider),
+				slog.String("model", mc.Model),
+				slog.Any("messages", conversation),
+				slog.Any("tools", defs),
+			)
 		}
 		start := time.Now()
 		resp, callErr := rc.Call(callCtx, CallParams{
@@ -136,7 +174,25 @@ func (r *router) ExecuteRaw(ctx context.Context, req Request) (string, error) {
 			return resp.Content, nil
 		}
 
-		// EXECUTE TOOLS sequentially
+		// Surface the model's function calls back into the conversation so
+		// provider adapters like Gemini can pair them with subsequent tool responses.
+		if len(resp.ToolCalls) > 0 {
+			fcList := make([]map[string]any, 0, len(resp.ToolCalls))
+			for _, tc := range resp.ToolCalls {
+				var args any
+				_ = json.Unmarshal(tc.Args, &args)
+				fcList = append(fcList, map[string]any{
+					"tool": tc.Name,
+					"args": args,
+				})
+			}
+			if b, err := json.Marshal(fcList); err == nil {
+				conversation = append(conversation, Message{Role: RoleAssistant, Content: string(b)})
+			}
+		}
+
+		// EXECUTE TOOLS sequentially and collect all results
+		var toolResults []map[string]any
 		for _, tc := range resp.ToolCalls {
 			tool := findTool(req.Tools, tc.Name)
 			if tool == nil {
@@ -150,9 +206,33 @@ func (r *router) ExecuteRaw(ctx context.Context, req Request) (string, error) {
 			if err != nil {
 				return "", err
 			}
+			if os.Getenv("LLM_VERBOSE_MESSAGES") == "1" {
+				r.logger.Info("tool executed",
+					slog.String("tool", tc.Name),
+					slog.Any("args", argStruct),
+					slog.Any("output", output),
+				)
+			}
+			// Store tool results in a format that Gemini can parse as functionResponse
+			toolResults = append(toolResults, map[string]any{
+				"tool":   tc.Name,
+				"result": output,
+			})
+		}
+
+		// Add all tool results as a single assistant message
+		if len(toolResults) > 0 {
+			// Format multiple tool results as a JSON array for consistent parsing
+			b, _ := json.Marshal(toolResults)
+			if os.Getenv("LLM_VERBOSE_MESSAGES") == "1" {
+				r.logger.Info("combined tool results",
+					slog.Int("count", len(toolResults)),
+					slog.String("content", string(b)),
+				)
+			}
 			conversation = append(conversation, Message{
 				Role:    RoleAssistant,
-				Content: formatToolResult(tc.Name, output),
+				Content: string(b),
 			})
 		}
 	}
@@ -267,18 +347,45 @@ func (r *router) executeWithSchema(ctx context.Context, req Request, outputSchem
 
 	defs := make([]ToolDef, len(req.Tools))
 	for i, t := range req.Tools {
+		// Build parameter list from reflected schema
+		schemaStr := util.GenerateToolJSONSchema(t.Parameters())
+		var schema map[string]any
+		_ = json.Unmarshal([]byte(schemaStr), &schema)
+		props, _ := schema["properties"].(map[string]any)
+		reqList := map[string]bool{}
+		if reqArr, ok := schema["required"].([]any); ok {
+			for _, v := range reqArr {
+				if s, ok2 := v.(string); ok2 {
+					reqList[s] = true
+				}
+			}
+		}
+		paramList := make([]core.ToolParameter, 0, len(props))
+		for name, frag := range props {
+			var fragMap map[string]any
+			if m, ok := frag.(map[string]any); ok {
+				fragMap = m
+			} else {
+				fragMap = map[string]any{"type": "string"}
+			}
+			paramList = append(paramList, core.ToolParameter{
+				Name:     name,
+				Required: reqList[name],
+				Schema:   fragMap,
+			})
+		}
 		defs[i] = ToolDef{
 			Name:        t.Name(),
 			Description: t.Description(),
-			JSONSchema:  util.GenerateJSONSchema(t.Parameters()),
+			Parameters:  paramList,
 		}
 	}
 
 	// Only pass schema through if provider supports it; otherwise leave empty and we will parse/repair after.
 	if !mc.SupportsStructuredOutput {
 		outputSchema = ""
-	} else {
-		// For providers that are picky (e.g., Gemini), sanitize provided schema string
+	} else if outputSchema != "" {
+		// Inline $ref and strip draft keys to ensure providers like Gemini accept it
 		outputSchema = util.SanitizeResponseSchemaJSON(outputSchema)
 	}
 
@@ -325,6 +432,25 @@ func (r *router) executeWithSchema(ctx context.Context, req Request, outputSchem
 			return resp.Content, nil
 		}
 
+		// Surface the model's function calls back into the conversation so
+		// provider adapters like Gemini can pair them with subsequent tool responses.
+		if len(resp.ToolCalls) > 0 {
+			fcList := make([]map[string]any, 0, len(resp.ToolCalls))
+			for _, tc := range resp.ToolCalls {
+				var args any
+				_ = json.Unmarshal(tc.Args, &args)
+				fcList = append(fcList, map[string]any{
+					"tool": tc.Name,
+					"args": args,
+				})
+			}
+			if b, err := json.Marshal(fcList); err == nil {
+				conversation = append(conversation, Message{Role: RoleAssistant, Content: string(b)})
+			}
+		}
+
+		// EXECUTE TOOLS sequentially and collect all results
+		var toolResults []map[string]any
 		for _, tc := range resp.ToolCalls {
 			tool := findTool(req.Tools, tc.Name)
 			if tool == nil {
@@ -338,7 +464,34 @@ func (r *router) executeWithSchema(ctx context.Context, req Request, outputSchem
 			if err != nil {
 				return "", err
 			}
-			conversation = append(conversation, Message{Role: RoleAssistant, Content: formatToolResult(tc.Name, output)})
+			if os.Getenv("LLM_VERBOSE_MESSAGES") == "1" {
+				r.logger.Info("tool executed",
+					slog.String("tool", tc.Name),
+					slog.Any("args", argStruct),
+					slog.Any("output", output),
+				)
+			}
+			// Store tool results in a format that Gemini can parse as functionResponse
+			toolResults = append(toolResults, map[string]any{
+				"tool":   tc.Name,
+				"result": output,
+			})
+		}
+
+		// Add all tool results as a single assistant message
+		if len(toolResults) > 0 {
+			// Format multiple tool results as a JSON array for consistent parsing
+			b, _ := json.Marshal(toolResults)
+			if os.Getenv("LLM_VERBOSE_MESSAGES") == "1" {
+				r.logger.Info("combined tool results",
+					slog.Int("count", len(toolResults)),
+					slog.String("content", string(b)),
+				)
+			}
+			conversation = append(conversation, Message{
+				Role:    RoleAssistant,
+				Content: string(b),
+			})
 		}
 	}
 	return "", moderr.ErrMaxToolTurns

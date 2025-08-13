@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/lizzyg/llmrouter/internal/config"
@@ -66,19 +67,40 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 	}
 	if len(params.ToolDefs) > 0 {
 		payload.Tools = mapTools(params.ToolDefs)
-		// Encourage the model to use at least one function
-		payload.ToolConfig = map[string]any{
-			"functionCallingConfig": map[string]any{
-				"mode": "ANY",
-			},
+		// When tools are present, don't use structured output as it conflicts with tool calling.
+		// Heuristic: if we've already provided tool responses in the conversation, allow the model
+		// to choose whether to call again or finalize by using AUTO. Otherwise, use ANY to encourage
+		// an initial tool call.
+		mode := "ANY"
+		for _, c := range payload.Contents {
+			if parts, ok := c["parts"].([]any); ok {
+				for _, p := range parts {
+					if pm, ok2 := p.(map[string]any); ok2 {
+						if _, hasFR := pm["functionResponse"]; hasFR {
+							mode = "AUTO"
+							break
+						}
+					}
+				}
+			}
+			if mode == "AUTO" {
+				break
+			}
 		}
-	}
-	if params.OutputSchema != "" {
+		payload.ToolConfig = map[string]any{
+			"functionCallingConfig": map[string]any{"mode": mode},
+		}
+	} else if params.OutputSchema != "" {
+		// Only use structured output when no tools are present
 		payload.GenerationConfig["responseMimeType"] = "application/json"
+		// Convert the provided schema (already a JSON string) into Gemini dialect
 		payload.GenerationConfig["responseSchema"] = convertJSONSchemaToGemini(params.OutputSchema)
 	}
 
 	body, _ := json.Marshal(payload)
+	if os.Getenv("LLM_VERBOSE_MESSAGES") == "1" {
+		c.logger.Info("gemini request payload", "payload", string(body))
+	}
 	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", c.model, c.apiKey)
 
 	var gr generateResponse
@@ -102,6 +124,11 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 	})
 	if err != nil {
 		return core.RawResponse{}, err
+	}
+
+	if os.Getenv("LLM_VERBOSE_MESSAGES") == "1" {
+		respBody, _ := json.Marshal(gr)
+		c.logger.Info("gemini response", "response", string(respBody))
 	}
 
 	out := core.RawResponse{}
@@ -149,14 +176,55 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 }
 
 func mapMessages(msgs []core.Message) []map[string]any {
+	if os.Getenv("LLM_VERBOSE_MESSAGES") == "1" {
+		for i, m := range msgs {
+			slog.Default().Info("gemini mapMessages debug",
+				slog.Int("index", i),
+				slog.String("role", m.Role),
+				slog.String("content", m.Content),
+			)
+		}
+	}
 	out := make([]map[string]any, 0, len(msgs))
 	for _, m := range msgs {
 		parts := []any{}
 		if m.Content != "" {
 			// Try to interpret assistant tool results (formatToolResult JSON) as functionResponse
 			if m.Role == "assistant" {
+				// Path A: assistant content contains function calls to be echoed (for pairing)
+				var fcArray []map[string]any
+				if err := json.Unmarshal([]byte(m.Content), &fcArray); err == nil {
+					// If objects look like {"tool": name, "args": {...}}, emit functionCall parts
+					valid := true
+					partsFromFC := []any{}
+					for _, item := range fcArray {
+						name, okN := item["tool"].(string)
+						args, okA := item["args"].(map[string]any)
+						if okN && okA {
+							partsFromFC = append(partsFromFC, map[string]any{
+								"functionCall": map[string]any{
+									"name": name,
+									"args": args,
+								},
+							})
+						} else {
+							valid = false
+							break
+						}
+					}
+					if valid && len(partsFromFC) > 0 {
+						parts = append(parts, partsFromFC...)
+						// Note: role remains "assistant" when sending functionCall echo
+						// Short-circuit remaining parsing for this message
+						out = append(out, map[string]any{"role": m.Role, "parts": parts})
+						continue
+					}
+				}
+
+				// Path B: assistant contains tool results to send back as functionResponse
+				parsed := false
 				var obj map[string]any
-				if json.Unmarshal([]byte(m.Content), &obj) == nil {
+				if err := json.Unmarshal([]byte(m.Content), &obj); err == nil {
 					if toolName, ok := obj["tool"].(string); ok {
 						parts = append(parts, map[string]any{
 							"functionResponse": map[string]any{
@@ -164,10 +232,28 @@ func mapMessages(msgs []core.Message) []map[string]any {
 								"response": obj["result"],
 							},
 						})
-					} else {
-						parts = append(parts, map[string]any{"text": m.Content})
+						parsed = true
 					}
-				} else {
+				}
+				// If not parsed as single object, try array of tool results
+				if !parsed {
+					var objArray []map[string]any
+					if err := json.Unmarshal([]byte(m.Content), &objArray); err == nil {
+						for _, toolResult := range objArray {
+							if toolName, ok := toolResult["tool"].(string); ok {
+								parts = append(parts, map[string]any{
+									"functionResponse": map[string]any{
+										"name":     toolName,
+										"response": toolResult["result"],
+									},
+								})
+								parsed = true
+							}
+						}
+					}
+				}
+				// Fallback to plain text if neither parse path matched
+				if !parsed {
 					parts = append(parts, map[string]any{"text": m.Content})
 				}
 			} else {
@@ -197,20 +283,27 @@ func mapMessages(msgs []core.Message) []map[string]any {
 }
 
 func mapTools(defs []core.ToolDef) []map[string]any {
-	out := make([]map[string]any, len(defs))
-	for i, d := range defs {
-		params := convertJSONSchemaToGemini(d.JSONSchema)
-		out[i] = map[string]any{
-			"function_declarations": []map[string]any{
-				{
-					"name":        d.Name,
-					"description": d.Description,
-					"parameters":  params,
-				},
-			},
-		}
+	// Gemini expects a single tools entry containing all functionDeclarations, with camelCase keys.
+	// Shape: tools: [ { functionDeclarations: [ { name, description, parameters }, ... ] } ]
+	fns := make([]map[string]any, 0, len(defs))
+	for _, d := range defs {
+		// Build JSON schema object from ToolDef.Parameters
+		schema := core.GenerateJSONSchemaFromToolDef(d)
+		params := convertJSONSchemaToGemini(schema)
+		fns = append(fns, map[string]any{
+			"name":        d.Name,
+			"description": d.Description,
+			"parameters":  params,
+		})
 	}
-	return out
+	if len(fns) == 0 {
+		return nil
+	}
+	return []map[string]any{
+		{
+			"functionDeclarations": fns,
+		},
+	}
 }
 
 // convertJSONSchemaToGemini transforms a standard JSON Schema into Gemini's schema dialect.

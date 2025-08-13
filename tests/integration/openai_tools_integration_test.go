@@ -1,6 +1,3 @@
-//go:build integration
-// +build integration
-
 package integration
 
 import (
@@ -49,7 +46,6 @@ func TestOpenAI_ToolWorkflow_LocationThenWeather(t *testing.T) {
 	if apiKey == "" {
 		t.Skip("OPENAI_API_KEY not set; skipping integration test")
 	}
-
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(cfgPath, []byte(`llm:

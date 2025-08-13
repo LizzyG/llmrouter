@@ -34,13 +34,50 @@ func GenerateToolJSONSchema(obj any) string {
 		// Fall back to a minimal object
 		return `{"type":"object","properties":{}}`
 	}
+
+	// Try to inline $ref if present (same logic as GenerateResponseJSONSchema)
+	if ref, ok := m["$ref"].(string); ok && ref != "" {
+		var defsKey string
+		if _, ok := m["$defs"]; ok {
+			defsKey = "$defs"
+		} else if _, ok := m["definitions"]; ok {
+			defsKey = "definitions"
+		}
+		if defsKey != "" {
+			if defs, ok := m[defsKey].(map[string]any); ok {
+				// Extract name after last '/'
+				lastSlash := -1
+				for i := len(ref) - 1; i >= 0; i-- {
+					if ref[i] == '/' {
+						lastSlash = i
+						break
+					}
+				}
+				if lastSlash >= 0 && lastSlash+1 < len(ref) {
+					name := ref[lastSlash+1:]
+					if target, ok := defs[name].(map[string]any); ok {
+						// Replace root with target schema
+						for k := range m {
+							delete(m, k)
+						}
+						for k, v := range target {
+							m[k] = v
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Remove meta keys
 	delete(m, "$schema")
 	delete(m, "$id")
 	delete(m, "$defs")
+	delete(m, "definitions")
 	delete(m, "$ref")
 	delete(m, "title")
 	delete(m, "description")
+	delete(m, "additionalProperties")
 	// Ensure type object
 	if _, ok := m["type"]; !ok {
 		m["type"] = "object"

@@ -169,7 +169,9 @@ func mapChatMessages(msgs []core.Message) []map[string]any {
 func mapTools(defs []core.ToolDef) []map[string]any {
 	out := make([]map[string]any, len(defs))
 	for i, d := range defs {
-		params := coerceOpenAIParams(d.JSONSchema)
+		// Build JSON schema from parameter list to avoid provider-specific leakage
+		schema := core.GenerateJSONSchemaFromToolDef(d)
+		params := coerceOpenAIParams(schema)
 		out[i] = map[string]any{
 			"type": "function",
 			"function": map[string]any{

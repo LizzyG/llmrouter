@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -69,7 +70,35 @@ func Load() (*LLMConfig, error) {
 			loadErr = err
 			return
 		}
+
+		// Resolve environment variables in string fields
+		resolveEnvVars(&cfg)
+
 		loaded = &cfg
 	})
 	return loaded, loadErr
+}
+
+var envVarRegex = regexp.MustCompile(`\$\{([^}]+)\}`)
+
+// resolveEnvVars resolves ${VAR} patterns in config string fields
+func resolveEnvVars(cfg *LLMConfig) {
+	for key, model := range cfg.Models {
+		model.APIKey = resolveEnvString(model.APIKey)
+		model.Provider = resolveEnvString(model.Provider)
+		model.Model = resolveEnvString(model.Model)
+		cfg.Models[key] = model
+	}
+}
+
+// resolveEnvString replaces ${VAR} with environment variable values
+func resolveEnvString(s string) string {
+	return envVarRegex.ReplaceAllStringFunc(s, func(match string) string {
+		// Extract variable name from ${VAR}
+		varName := match[2 : len(match)-1] // Remove ${ and }
+		if value := os.Getenv(varName); value != "" {
+			return value
+		}
+		return match // Return original if env var not found
+	})
 }

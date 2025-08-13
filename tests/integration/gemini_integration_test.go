@@ -1,6 +1,3 @@
-//go:build integration
-// +build integration
-
 package integration
 
 import (
@@ -26,9 +23,9 @@ func TestGemini_Execute_TypedJSON(t *testing.T) {
 	cfgPath := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(cfgPath, []byte(`llm:
   models:
-    gemini15pro:
+    gemini15flash:
       provider: gemini
-      model: gemini-1.5-pro
+      model: gemini-1.5-flash
       api_key: `+apiKey+`
       supports_web_search: false
       supports_tools: true
@@ -58,7 +55,7 @@ func TestGemini_Execute_TypedJSON(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	got, err := llm.Execute[Answer](ctx, client, llm.Request{
-		Model: "gemini15pro",
+		Model: "gemini15flash",
 		Messages: []llm.Message{{
 			Role:    llm.RoleUser,
 			Content: "Respond ONLY as JSON matching this shape: {headline: string, points: string[3], stats: {count: integer > 0, score: number 0..1}, success: boolean}. Summarize Go 1.22 features.",
