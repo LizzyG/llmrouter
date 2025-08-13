@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	moderr "github.com/lizzyg/llmrouter/errors"
@@ -29,6 +30,7 @@ type router struct {
 	logger       *slog.Logger
 	httpClient   *http.Client
 	maxToolTurns int
+	mu           sync.Mutex
 }
 
 // Option allows functional configuration.
@@ -240,6 +242,9 @@ func (r *router) ExecuteRaw(ctx context.Context, req Request) (string, error) {
 }
 
 func (r *router) getClient(mc config.ModelConfig) (RawClient, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	key := mc.Provider
 	if c, ok := r.clients[key]; ok {
 		return c, nil
