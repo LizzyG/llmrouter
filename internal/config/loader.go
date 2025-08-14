@@ -98,9 +98,6 @@ func resolveEnvString(s string) string {
 	return envVarRegex.ReplaceAllStringFunc(s, func(match string) string {
 		// Extract variable name from ${VAR}
 		varName := match[2 : len(match)-1] // Remove ${ and }
-		if value := os.Getenv(varName); value != "" {
-			return value
-		}
-		return match // Return original if env var not found
+		return os.Getenv(varName)
 	})
 }
