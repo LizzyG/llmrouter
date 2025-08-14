@@ -56,9 +56,9 @@ type Usage struct {
 }
 
 type ToolCall struct {
-    CallID string
-	Name string
-	Args json.RawMessage
+	CallID string
+	Name   string
+	Args   json.RawMessage
 }
 
 // GenerateJSONSchemaFromToolDef produces a standard JSON Schema object string

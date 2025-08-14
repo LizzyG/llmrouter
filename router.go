@@ -184,30 +184,30 @@ func (r *router) executeInternal(ctx context.Context, req Request, outputSchema 
 
 			// Surface the model's function calls back into the conversation so
 			// provider adapters like Gemini can pair them with subsequent tool responses.
-            if len(resp.ToolCalls) > 0 {
-                fcList := make([]map[string]any, 0, len(resp.ToolCalls))
-                for _, tc := range resp.ToolCalls {
-                    var args any
-                    _ = json.Unmarshal(tc.Args, &args)
-                    item := map[string]any{
-                        "tool": tc.Name,
-                        "args": args,
-                    }
-                    if tc.CallID != "" {
-                        item["tool_call_id"] = tc.CallID
-                    }
-                    fcList = append(fcList, item)
-                }
-                if b, err := json.Marshal(fcList); err == nil {
-                    conversation = append(conversation, Message{Role: RoleAssistant, Content: string(b)})
-                } else {
-                    return "", true, err
-                }
-            }
+			if len(resp.ToolCalls) > 0 {
+				fcList := make([]map[string]any, 0, len(resp.ToolCalls))
+				for _, tc := range resp.ToolCalls {
+					var args any
+					_ = json.Unmarshal(tc.Args, &args)
+					item := map[string]any{
+						"tool": tc.Name,
+						"args": args,
+					}
+					if tc.CallID != "" {
+						item["tool_call_id"] = tc.CallID
+					}
+					fcList = append(fcList, item)
+				}
+				if b, err := json.Marshal(fcList); err == nil {
+					conversation = append(conversation, Message{Role: RoleAssistant, Content: string(b)})
+				} else {
+					return "", true, err
+				}
+			}
 
 			// EXECUTE TOOLS sequentially and collect all results
-            var toolResults []map[string]any
-            for _, tc := range resp.ToolCalls {
+			var toolResults []map[string]any
+			for _, tc := range resp.ToolCalls {
 				tool := findTool(req.Tools, tc.Name)
 				if tool == nil {
 					return "", true, moderr.ErrUnknownTool
@@ -227,15 +227,15 @@ func (r *router) executeInternal(ctx context.Context, req Request, outputSchema 
 						slog.Any("output", output),
 					)
 				}
-                // Store tool results in a format that Gemini (functionResponse) and OpenAI (tool message) can parse
-                item := map[string]any{
-                    "tool":   tc.Name,
-                    "result": output,
-                }
-                if tc.CallID != "" {
-                    item["tool_call_id"] = tc.CallID
-                }
-                toolResults = append(toolResults, item)
+				// Store tool results in a format that Gemini (functionResponse) and OpenAI (tool message) can parse
+				item := map[string]any{
+					"tool":   tc.Name,
+					"result": output,
+				}
+				if tc.CallID != "" {
+					item["tool_call_id"] = tc.CallID
+				}
+				toolResults = append(toolResults, item)
 			}
 
 			// Add all tool results as a single assistant message
