@@ -3,6 +3,7 @@ package llmrouter
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -150,9 +151,13 @@ func (r *router) executeInternal(ctx context.Context, req Request, outputSchema 
 				)
 			}
 			start := time.Now()
+			messages, err := r.mapMessages(conversation)
+			if err != nil {
+				return "", false, err
+			}
 			resp, callErr := rc.Call(callCtx, CallParams{
 				Model:        mc.Model,
-				Messages:     r.mapMessages(conversation),
+				Messages:     messages,
 				ToolDefs:     defs,
 				OutputSchema: outputSchema,
 				MaxTokens:    boundedInt(req.MaxTokens, mc.MaxOutputTokens),
@@ -346,23 +351,27 @@ func boundedInt(req, max int) int {
 	return req
 }
 
-func (r *router) mapMessages(msgs []Message) []core.Message {
+func (r *router) mapMessages(msgs []Message) ([]core.Message, error) {
 	out := make([]core.Message, len(msgs))
 	for i, m := range msgs {
+		toolCalls, err := mapToolCalls(m.ToolCalls, r.logger)
+		if err != nil {
+			return nil, err
+		}
 		out[i] = core.Message{
 			Role:        string(m.Role),
 			Content:     m.Content,
 			Images:      append([]string(nil), m.Images...),
-			ToolCalls:   mapToolCalls(m.ToolCalls, r.logger),
+			ToolCalls:   toolCalls,
 			ToolResults: mapToolResults(m.ToolResults),
 		}
 	}
-	return out
+	return out, nil
 }
 
-func mapToolCalls(in []ToolCall, logger *slog.Logger) []core.ToolCall {
+func mapToolCalls(in []ToolCall, logger *slog.Logger) ([]core.ToolCall, error) {
 	if len(in) == 0 {
-		return nil
+		return nil, nil
 	}
 	out := make([]core.ToolCall, 0, len(in))
 	for _, tc := range in {
@@ -371,13 +380,13 @@ func mapToolCalls(in []ToolCall, logger *slog.Logger) []core.ToolCall {
 			b, err := json.Marshal(tc.Args)
 			if err != nil {
 				logger.Error("failed to marshal tool call args for core message", "error", err, "tool", tc.Name)
-				continue // Skip this tool call if args are invalid
+				return nil, fmt.Errorf("failed to marshal tool call args for tool %s: %w", tc.Name, err)
 			}
 			raw = b
 		}
 		out = append(out, core.ToolCall{CallID: tc.CallID, Name: tc.Name, Args: raw})
 	}
-	return out
+	return out, nil
 }
 
 func mapToolResults(in []ToolResult) []core.ToolResult {

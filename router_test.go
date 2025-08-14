@@ -285,13 +285,45 @@ func TestMapToolCalls_HandlesMarshalError(t *testing.T) {
 		Args:   ch, // This will fail to marshal
 	}}
 	
-	result := mapToolCalls(toolCalls, logger)
+	result, err := mapToolCalls(toolCalls, logger)
 	
-	// Should only have the valid tool call, invalid one should be skipped
-	if len(result) != 1 {
-		t.Fatalf("expected 1 valid tool call, got %d", len(result))
+	// Should return an error for unmarshalable args
+	if err == nil {
+		t.Fatal("expected error for unmarshalable tool call args")
 	}
-	if result[0].Name != "ValidTool" {
-		t.Fatalf("expected ValidTool, got %s", result[0].Name)
+	if result != nil {
+		t.Fatalf("expected nil result when error occurs, got %v", result)
+	}
+}
+
+func TestMapToolCalls_ValidArgs(t *testing.T) {
+	logger := slog.Default()
+	
+	// Create tool calls with valid args
+	toolCalls := []ToolCall{{
+		CallID: "test1",
+		Name:   "ValidTool1",
+		Args:   map[string]any{"data": "valid"},
+	}, {
+		CallID: "test2", 
+		Name:   "ValidTool2",
+		Args:   nil, // nil args should be fine
+	}, {
+		CallID: "test3",
+		Name:   "ValidTool3", 
+		Args:   []string{"arg1", "arg2"},
+	}}
+	
+	result, err := mapToolCalls(toolCalls, logger)
+	
+	// Should succeed for valid args
+	if err != nil {
+		t.Fatalf("unexpected error for valid tool call args: %v", err)
+	}
+	if len(result) != 3 {
+		t.Fatalf("expected 3 tool calls, got %d", len(result))
+	}
+	if result[0].Name != "ValidTool1" {
+		t.Fatalf("expected ValidTool1, got %s", result[0].Name)
 	}
 }
