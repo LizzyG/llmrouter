@@ -156,6 +156,41 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 func mapChatMessages(msgs []core.Message) []map[string]any {
 	out := make([]map[string]any, 0, len(msgs))
     for _, m := range msgs {
+        // Prefer structured fields when present
+        if len(m.ToolCalls) > 0 {
+            tc := make([]map[string]any, 0, len(m.ToolCalls))
+            for _, it := range m.ToolCalls {
+                argsStr := "{}"
+                if len(it.Args) > 0 {
+                    argsStr = string(it.Args)
+                }
+                tc = append(tc, map[string]any{
+                    "type": "function",
+                    "id":   it.CallID,
+                    "function": map[string]any{
+                        "name":      it.Name,
+                        "arguments": argsStr,
+                    },
+                })
+            }
+            out = append(out, map[string]any{
+                "role":       m.Role,
+                "content":    "",
+                "tool_calls": tc,
+            })
+            continue
+        }
+        if len(m.ToolResults) > 0 {
+            for _, tr := range m.ToolResults {
+                out = append(out, map[string]any{
+                    "role":         "tool",
+                    "tool_call_id": tr.CallID,
+                    "name":         tr.Name,
+                    "content":      fmt.Sprintf("%v", tr.Result),
+                })
+            }
+            continue
+        }
         // For OpenAI:
         // - Assistant messages containing function calls should be encoded as an assistant message
         //   with tool_calls, not plain content.
