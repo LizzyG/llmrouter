@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -314,8 +315,15 @@ func (r *router) selectModel(req Request) (config.ModelConfig, string, error) {
 		return mc, req.Model, nil
 	}
 
-	// Auto select
-	for key, mc := range r.models {
+	// Auto select - use sorted keys for deterministic behavior
+	keys := make([]string, 0, len(r.models))
+	for k := range r.models {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		mc := r.models[key]
 		if req.AllowWebSearch && !mc.SupportsWebSearch {
 			continue
 		}

@@ -11,6 +11,16 @@ import (
 	"github.com/lizzyg/llmrouter/internal/core"
 )
 
+// mockTestTool implements the Tool interface for testing
+type mockTestTool struct{}
+
+func (m *mockTestTool) Name() string        { return "TestTool" }
+func (m *mockTestTool) Description() string { return "A test tool" }
+func (m *mockTestTool) Parameters() any     { return struct{}{} }
+func (m *mockTestTool) Execute(ctx context.Context, args any) (any, error) {
+	return "test result", nil
+}
+
 type fakeClient struct {
 	calls     int
 	lastModel string
@@ -325,5 +335,51 @@ func TestMapToolCalls_ValidArgs(t *testing.T) {
 	}
 	if result[0].Name != "ValidTool1" {
 		t.Fatalf("expected ValidTool1, got %s", result[0].Name)
+	}
+}
+
+func TestSelectModel_DeterministicAutoSelection(t *testing.T) {
+	// Test that auto-selection is deterministic by using multiple models
+	// and ensuring the same one is always selected
+	models := map[string]config.ModelConfig{
+		"zebra": {
+			Provider:     "openai",
+			Model:        "gpt-4",
+			SupportsTools: true,
+		},
+		"alpha": {
+			Provider:     "openai", 
+			Model:        "gpt-3.5",
+			SupportsTools: true,
+		},
+		"beta": {
+			Provider:     "gemini",
+			Model:        "gemini-pro",
+			SupportsTools: true,
+		},
+	}
+	
+	r := &router{models: models}
+	
+	// Create a mock tool that implements the Tool interface
+	mockTool := &mockTestTool{}
+	
+	// Run selection multiple times and ensure same result
+	var firstKey string
+	for i := 0; i < 10; i++ {
+		_, key, err := r.selectModel(Request{Tools: []Tool{mockTool}})
+		if err != nil {
+			t.Fatalf("selectModel failed: %v", err)
+		}
+		if i == 0 {
+			firstKey = key
+		} else if key != firstKey {
+			t.Fatalf("selectModel is non-deterministic: got %s on iteration %d, expected %s", key, i, firstKey)
+		}
+	}
+	
+	// Should always select "alpha" (first alphabetically that supports tools)
+	if firstKey != "alpha" {
+		t.Fatalf("expected alpha to be selected (alphabetically first), got %s", firstKey)
 	}
 }
