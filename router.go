@@ -82,44 +82,43 @@ func (r *router) executeInternal(ctx context.Context, req Request, outputSchema 
 		return "", err
 	}
 
-	// Prepare tool definitions for the API
-	defs := make([]ToolDef, len(req.Tools))
-	for i, t := range req.Tools {
-		// Reflect tool parameters into a JSON schema fragment per field using invopop
-		// by leveraging util.GenerateToolJSONSchema, then convert into a parameter list.
-		schemaStr := util.GenerateToolJSONSchema(t.Parameters())
-		// Parse schema into parameter list: properties + required
-		var schema map[string]any
-		_ = json.Unmarshal([]byte(schemaStr), &schema)
-		props, _ := schema["properties"].(map[string]any)
-		reqList := map[string]bool{}
-		if reqArr, ok := schema["required"].([]any); ok {
-			for _, v := range reqArr {
-				if s, ok2 := v.(string); ok2 {
-					reqList[s] = true
-				}
-			}
-		}
-		paramList := make([]core.ToolParameter, 0, len(props))
-		for name, frag := range props {
-			var fragMap map[string]any
-			if m, ok := frag.(map[string]any); ok {
-				fragMap = m
-			} else {
-				fragMap = map[string]any{"type": "string"}
-			}
-			paramList = append(paramList, core.ToolParameter{
-				Name:     name,
-				Required: reqList[name],
-				Schema:   fragMap,
-			})
-		}
-		defs[i] = ToolDef{
-			Name:        t.Name(),
-			Description: t.Description(),
-			Parameters:  paramList,
-		}
-	}
+    // Prepare tool definitions for the API
+    defs := make([]ToolDef, len(req.Tools))
+    for i, t := range req.Tools {
+        // Build parameter list directly from a parsed, sanitized schema map
+        schemaMap, err := util.GenerateToolJSONSchemaMap(t.Parameters())
+        if err != nil {
+            return "", err
+        }
+        props, _ := schemaMap["properties"].(map[string]any)
+        reqList := map[string]bool{}
+        if reqArr, ok := schemaMap["required"].([]any); ok {
+            for _, v := range reqArr {
+                if s, ok2 := v.(string); ok2 {
+                    reqList[s] = true
+                }
+            }
+        }
+        paramList := make([]core.ToolParameter, 0, len(props))
+        for name, frag := range props {
+            var fragMap map[string]any
+            if m, ok := frag.(map[string]any); ok {
+                fragMap = m
+            } else {
+                fragMap = map[string]any{"type": "string"}
+            }
+            paramList = append(paramList, core.ToolParameter{
+                Name:     name,
+                Required: reqList[name],
+                Schema:   fragMap,
+            })
+        }
+        defs[i] = ToolDef{
+            Name:        t.Name(),
+            Description: t.Description(),
+            Parameters:  paramList,
+        }
+    }
 
 	// Only pass schema through if required and provider supports it; otherwise leave empty and we will parse/repair after.
 	if !requireStructured || !mc.SupportsStructuredOutput {
@@ -195,11 +194,11 @@ func (r *router) executeInternal(ctx context.Context, req Request, outputSchema 
 						"args": args,
 					})
 				}
-            if b, err := json.Marshal(fcList); err == nil {
-                conversation = append(conversation, Message{Role: RoleAssistant, Content: string(b)})
-            } else {
-                return "", true, err
-            }
+				if b, err := json.Marshal(fcList); err == nil {
+					conversation = append(conversation, Message{Role: RoleAssistant, Content: string(b)})
+				} else {
+					return "", true, err
+				}
 			}
 
 			// EXECUTE TOOLS sequentially and collect all results
@@ -234,11 +233,11 @@ func (r *router) executeInternal(ctx context.Context, req Request, outputSchema 
 			// Add all tool results as a single assistant message
 			if len(toolResults) > 0 {
 				// Format multiple tool results as a JSON array for consistent parsing
-            b, err := json.Marshal(toolResults)
-            if err != nil {
-                return "", true, err
-            }
-            if os.Getenv("LLM_VERBOSE_MESSAGES") == "1" {
+				b, err := json.Marshal(toolResults)
+				if err != nil {
+					return "", true, err
+				}
+				if os.Getenv("LLM_VERBOSE_MESSAGES") == "1" {
 					r.logger.Info("combined tool results",
 						slog.Int("count", len(toolResults)),
 						slog.String("content", string(b)),

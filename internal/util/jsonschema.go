@@ -44,6 +44,21 @@ func GenerateToolJSONSchema(obj any) string {
 	return string(b)
 }
 
+// GenerateToolJSONSchemaMap returns a provider-friendly schema as a parsed map
+// to avoid marshal/unmarshal cycles when the caller needs to inspect properties.
+// The returned map has been sanitized similarly to GenerateToolJSONSchema.
+func GenerateToolJSONSchemaMap(obj any) (map[string]any, error) {
+    raw := GenerateJSONSchema(obj)
+    var m map[string]any
+    if err := json.Unmarshal([]byte(raw), &m); err != nil {
+        return nil, err
+    }
+
+    inlineTopLevelRef(m)
+    sanitizeMetaAndCoerceObject(m, true)
+    return m, nil
+}
+
 // GenerateResponseJSONSchema attempts to inline top-level $ref to a definition so that
 // providers that don't support $ref can still receive a concrete object schema.
 // Falls back to a minimal object schema on failure.
