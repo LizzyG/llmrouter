@@ -22,7 +22,7 @@ type ModelConfig struct {
 	Provider                 string `koanf:"provider"`
 	Model                    string `koanf:"model"`
 	APIKey                   string `koanf:"api_key"`
-    WebVariant               string `koanf:"web_variant"`
+	WebVariant               string `koanf:"web_variant"`
 	SupportsWebSearch        bool   `koanf:"supports_web_search"`
 	SupportsTools            bool   `koanf:"supports_tools"`
 	SupportsStructuredOutput bool   `koanf:"supports_structured_output"`
@@ -88,7 +88,7 @@ func resolveEnvVars(cfg *LLMConfig) {
 		model.APIKey = resolveEnvString(model.APIKey)
 		model.Provider = resolveEnvString(model.Provider)
 		model.Model = resolveEnvString(model.Model)
-        model.WebVariant = resolveEnvString(model.WebVariant)
+		model.WebVariant = resolveEnvString(model.WebVariant)
 		cfg.Models[key] = model
 	}
 }

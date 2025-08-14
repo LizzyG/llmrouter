@@ -45,6 +45,8 @@ llm:
       max_output_tokens: 4096
 ```
 
+**Note:** The `web_variant` field allows you to explicitly map a model to its web-enabled counterpart for when `AllowWebSearch=true` is requested. This is the recommended approach over relying on automatic `-web` suffix detection.
+
 ### Usage
 
 ```go
@@ -79,7 +81,7 @@ func main() {
 
 ### Notes
 
-- If `AllowWebSearch=true` for an OpenAI model, the router will look for a `-web` variant (e.g., `gpt4o-web`).
+- If `AllowWebSearch=true` for an OpenAI model, the router will look for a web-enabled variant. You can explicitly specify this using the `web_variant` field in `config.yaml` (recommended), or it will fallback to looking for a `-web` suffix variant (e.g., `gpt4o-web`).
 - If `T` is not `string`, final content must be JSON (repair attempted on failure).
 - Tool calls are executed sequentially.
 
