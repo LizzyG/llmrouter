@@ -184,26 +184,30 @@ func (r *router) executeInternal(ctx context.Context, req Request, outputSchema 
 
 			// Surface the model's function calls back into the conversation so
 			// provider adapters like Gemini can pair them with subsequent tool responses.
-			if len(resp.ToolCalls) > 0 {
-				fcList := make([]map[string]any, 0, len(resp.ToolCalls))
-				for _, tc := range resp.ToolCalls {
-					var args any
-					_ = json.Unmarshal(tc.Args, &args)
-					fcList = append(fcList, map[string]any{
-						"tool": tc.Name,
-						"args": args,
-					})
-				}
-				if b, err := json.Marshal(fcList); err == nil {
-					conversation = append(conversation, Message{Role: RoleAssistant, Content: string(b)})
-				} else {
-					return "", true, err
-				}
-			}
+            if len(resp.ToolCalls) > 0 {
+                fcList := make([]map[string]any, 0, len(resp.ToolCalls))
+                for _, tc := range resp.ToolCalls {
+                    var args any
+                    _ = json.Unmarshal(tc.Args, &args)
+                    item := map[string]any{
+                        "tool": tc.Name,
+                        "args": args,
+                    }
+                    if tc.CallID != "" {
+                        item["tool_call_id"] = tc.CallID
+                    }
+                    fcList = append(fcList, item)
+                }
+                if b, err := json.Marshal(fcList); err == nil {
+                    conversation = append(conversation, Message{Role: RoleAssistant, Content: string(b)})
+                } else {
+                    return "", true, err
+                }
+            }
 
 			// EXECUTE TOOLS sequentially and collect all results
-			var toolResults []map[string]any
-			for _, tc := range resp.ToolCalls {
+            var toolResults []map[string]any
+            for _, tc := range resp.ToolCalls {
 				tool := findTool(req.Tools, tc.Name)
 				if tool == nil {
 					return "", true, moderr.ErrUnknownTool
@@ -223,11 +227,15 @@ func (r *router) executeInternal(ctx context.Context, req Request, outputSchema 
 						slog.Any("output", output),
 					)
 				}
-				// Store tool results in a format that Gemini can parse as functionResponse
-				toolResults = append(toolResults, map[string]any{
-					"tool":   tc.Name,
-					"result": output,
-				})
+                // Store tool results in a format that Gemini (functionResponse) and OpenAI (tool message) can parse
+                item := map[string]any{
+                    "tool":   tc.Name,
+                    "result": output,
+                }
+                if tc.CallID != "" {
+                    item["tool_call_id"] = tc.CallID
+                }
+                toolResults = append(toolResults, item)
 			}
 
 			// Add all tool results as a single assistant message
@@ -285,21 +293,21 @@ func (r *router) selectModel(req Request) (config.ModelConfig, string, error) {
 		if !ok {
 			return config.ModelConfig{}, "", moderr.ErrNoMatchingModel
 		}
-        if req.AllowWebSearch && mc.Provider == "openai" {
-            // Prefer explicit web variant mapping from configuration over suffix conventions
-            if mc.WebVariant != "" {
-                if webModel, ok := r.models[mc.WebVariant]; ok {
-                    return webModel, mc.WebVariant, nil
-                }
-                return config.ModelConfig{}, "", moderr.ErrNoMatchingModel
-            }
-            // Fallback: maintain backward-compat with "-web" suffix if present in config
-            fallbackKey := req.Model + "-web"
-            if webModel, ok := r.models[fallbackKey]; ok {
-                return webModel, fallbackKey, nil
-            }
-            return config.ModelConfig{}, "", moderr.ErrNoMatchingModel
-        }
+		if req.AllowWebSearch && mc.Provider == "openai" {
+			// Prefer explicit web variant mapping from configuration over suffix conventions
+			if mc.WebVariant != "" {
+				if webModel, ok := r.models[mc.WebVariant]; ok {
+					return webModel, mc.WebVariant, nil
+				}
+				return config.ModelConfig{}, "", moderr.ErrNoMatchingModel
+			}
+			// Fallback: maintain backward-compat with "-web" suffix if present in config
+			fallbackKey := req.Model + "-web"
+			if webModel, ok := r.models[fallbackKey]; ok {
+				return webModel, fallbackKey, nil
+			}
+			return config.ModelConfig{}, "", moderr.ErrNoMatchingModel
+		}
 		// Validate tool requirement and web search availability when explicitly chosen
 		if len(req.Tools) > 0 && !mc.SupportsTools {
 			return config.ModelConfig{}, "", moderr.ErrNoMatchingModel

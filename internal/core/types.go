@@ -56,6 +56,7 @@ type Usage struct {
 }
 
 type ToolCall struct {
+    CallID string
 	Name string
 	Args json.RawMessage
 }

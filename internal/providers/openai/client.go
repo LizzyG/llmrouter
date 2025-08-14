@@ -49,6 +49,7 @@ type chatResponse struct {
 			Content   any `json:"content"`
 			ToolCalls []struct {
 				Type     string `json:"type"`
+                ID       string `json:"id"`
 				Function struct {
 					Name      string `json:"name"`
 					Arguments string `json:"arguments"`
@@ -117,10 +118,10 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 	out := core.RawResponse{}
 	if len(rr.Choices) > 0 {
 		msg := rr.Choices[0].Message
-		if len(msg.ToolCalls) > 0 {
+        if len(msg.ToolCalls) > 0 {
 			out.ToolCalls = make([]core.ToolCall, len(msg.ToolCalls))
 			for i, tc := range msg.ToolCalls {
-				out.ToolCalls[i] = core.ToolCall{Name: tc.Function.Name, Args: json.RawMessage(tc.Function.Arguments)}
+                out.ToolCalls[i] = core.ToolCall{CallID: tc.ID, Name: tc.Function.Name, Args: json.RawMessage(tc.Function.Arguments)}
 			}
 		} else {
 			switch v := msg.Content.(type) {
@@ -154,18 +155,74 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 
 func mapChatMessages(msgs []core.Message) []map[string]any {
 	out := make([]map[string]any, 0, len(msgs))
-	for _, m := range msgs {
-		content := []any{}
-		if m.Content != "" {
-			content = append(content, map[string]any{"type": "text", "text": m.Content})
-		}
-		for _, img := range m.Images {
-			content = append(content, map[string]any{"type": "image_url", "image_url": map[string]any{"url": img}})
-		}
-		out = append(out, map[string]any{
-			"role":    m.Role,
-			"content": content,
-		})
+    for _, m := range msgs {
+        // For OpenAI:
+        // - Assistant messages containing function calls should be encoded as an assistant message
+        //   with tool_calls, not plain content.
+        // - Tool results should be encoded as role "tool" messages with tool_call_id.
+        if m.Role == "assistant" && m.Content != "" {
+            var arr []map[string]any
+            if err := json.Unmarshal([]byte(m.Content), &arr); err == nil {
+                // Check if looks like function call echo (has args)
+                isFuncCalls := true
+                for _, it := range arr {
+                    if _, ok := it["args"].(map[string]any); !ok {
+                        isFuncCalls = false
+                        break
+                    }
+                }
+                if isFuncCalls {
+                    tc := make([]map[string]any, 0, len(arr))
+                    for _, it := range arr {
+                        name, _ := it["tool"].(string)
+                        args, _ := it["args"].(map[string]any)
+                        id, _ := it["tool_call_id"].(string)
+                        argsStr := "{}"
+                        if b, err := json.Marshal(args); err == nil {
+                            argsStr = string(b)
+                        }
+                        tc = append(tc, map[string]any{
+                            "type": "function",
+                            "id":   id,
+                            "function": map[string]any{
+                                "name":      name,
+                                "arguments": argsStr,
+                            },
+                        })
+                    }
+                    out = append(out, map[string]any{
+                        "role":       "assistant",
+                        "content":    "",
+                        "tool_calls": tc,
+                    })
+                    continue
+                }
+                // Else: treat as tool results array
+                for _, tr := range arr {
+                    if toolName, ok := tr["tool"].(string); ok {
+                        toolCallID, _ := tr["tool_call_id"].(string)
+                        out = append(out, map[string]any{
+                            "role":         "tool",
+                            "tool_call_id": toolCallID,
+                            "name":         toolName,
+                            "content":      fmt.Sprintf("%v", tr["result"]),
+                        })
+                    }
+                }
+                continue
+            }
+        }
+        content := []any{}
+        if m.Content != "" {
+            content = append(content, map[string]any{"type": "text", "text": m.Content})
+        }
+        for _, img := range m.Images {
+            content = append(content, map[string]any{"type": "image_url", "image_url": map[string]any{"url": img}})
+        }
+        out = append(out, map[string]any{
+            "role":    m.Role,
+            "content": content,
+        })
 	}
 	return out
 }
