@@ -229,6 +229,22 @@ func TestSelect_OpenAI_WebSuffix(t *testing.T) {
 	}
 }
 
+func TestSelect_OpenAI_WebVariantExplicit(t *testing.T) {
+    fc := &fakeClient{responses: []RawResponse{{Content: `{"ok":true}`}}}
+    models := map[string]config.ModelConfig{
+        "gpt4o":     {Provider: "openai", Model: "gpt-4o", SupportsStructuredOutput: true, SupportsTools: true, WebVariant: "gpt4o-web"},
+        "gpt4o-web": {Provider: "openai", Model: "gpt-4o-web", SupportsStructuredOutput: true, SupportsTools: true, SupportsWebSearch: true},
+    }
+    r := newTestRouter(models, fc)
+    _, err := r.ExecuteRaw(context.Background(), Request{Model: "gpt4o", AllowWebSearch: true, Messages: []Message{{Role: RoleUser, Content: "hi"}}})
+    if err != nil {
+        t.Fatalf("unexpected err: %v", err)
+    }
+    if fc.lastModel != "gpt-4o-web" {
+        t.Fatalf("expected explicit web variant model, got %s", fc.lastModel)
+    }
+}
+
 func TestUnknownToolError(t *testing.T) {
 	fc := &fakeClient{responses: []RawResponse{{ToolCalls: []ToolCall{{Name: "missing", Args: []byte(`{}`)}}}}}
 	models := map[string]config.ModelConfig{

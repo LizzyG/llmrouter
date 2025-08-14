@@ -82,43 +82,43 @@ func (r *router) executeInternal(ctx context.Context, req Request, outputSchema 
 		return "", err
 	}
 
-    // Prepare tool definitions for the API
-    defs := make([]ToolDef, len(req.Tools))
-    for i, t := range req.Tools {
-        // Build parameter list directly from a parsed, sanitized schema map
-        schemaMap, err := util.GenerateToolJSONSchemaMap(t.Parameters())
-        if err != nil {
-            return "", err
-        }
-        props, _ := schemaMap["properties"].(map[string]any)
-        reqList := map[string]bool{}
-        if reqArr, ok := schemaMap["required"].([]any); ok {
-            for _, v := range reqArr {
-                if s, ok2 := v.(string); ok2 {
-                    reqList[s] = true
-                }
-            }
-        }
-        paramList := make([]core.ToolParameter, 0, len(props))
-        for name, frag := range props {
-            var fragMap map[string]any
-            if m, ok := frag.(map[string]any); ok {
-                fragMap = m
-            } else {
-                fragMap = map[string]any{"type": "string"}
-            }
-            paramList = append(paramList, core.ToolParameter{
-                Name:     name,
-                Required: reqList[name],
-                Schema:   fragMap,
-            })
-        }
-        defs[i] = ToolDef{
-            Name:        t.Name(),
-            Description: t.Description(),
-            Parameters:  paramList,
-        }
-    }
+	// Prepare tool definitions for the API
+	defs := make([]ToolDef, len(req.Tools))
+	for i, t := range req.Tools {
+		// Build parameter list directly from a parsed, sanitized schema map
+		schemaMap, err := util.GenerateToolJSONSchemaMap(t.Parameters())
+		if err != nil {
+			return "", err
+		}
+		props, _ := schemaMap["properties"].(map[string]any)
+		reqList := map[string]bool{}
+		if reqArr, ok := schemaMap["required"].([]any); ok {
+			for _, v := range reqArr {
+				if s, ok2 := v.(string); ok2 {
+					reqList[s] = true
+				}
+			}
+		}
+		paramList := make([]core.ToolParameter, 0, len(props))
+		for name, frag := range props {
+			var fragMap map[string]any
+			if m, ok := frag.(map[string]any); ok {
+				fragMap = m
+			} else {
+				fragMap = map[string]any{"type": "string"}
+			}
+			paramList = append(paramList, core.ToolParameter{
+				Name:     name,
+				Required: reqList[name],
+				Schema:   fragMap,
+			})
+		}
+		defs[i] = ToolDef{
+			Name:        t.Name(),
+			Description: t.Description(),
+			Parameters:  paramList,
+		}
+	}
 
 	// Only pass schema through if required and provider supports it; otherwise leave empty and we will parse/repair after.
 	if !requireStructured || !mc.SupportsStructuredOutput {
@@ -285,15 +285,21 @@ func (r *router) selectModel(req Request) (config.ModelConfig, string, error) {
 		if !ok {
 			return config.ModelConfig{}, "", moderr.ErrNoMatchingModel
 		}
-		if req.AllowWebSearch && mc.Provider == "openai" {
-			// openai: switch to -web variant of the same model key (e.g., gpt4o -> gpt4o-web)
-			webKey := req.Model + "-web"
-			webModel, ok := r.models[webKey]
-			if !ok {
-				return config.ModelConfig{}, "", moderr.ErrNoMatchingModel
-			}
-			return webModel, webKey, nil
-		}
+        if req.AllowWebSearch && mc.Provider == "openai" {
+            // Prefer explicit web variant mapping from configuration over suffix conventions
+            if mc.WebVariant != "" {
+                if webModel, ok := r.models[mc.WebVariant]; ok {
+                    return webModel, mc.WebVariant, nil
+                }
+                return config.ModelConfig{}, "", moderr.ErrNoMatchingModel
+            }
+            // Fallback: maintain backward-compat with "-web" suffix if present in config
+            fallbackKey := req.Model + "-web"
+            if webModel, ok := r.models[fallbackKey]; ok {
+                return webModel, fallbackKey, nil
+            }
+            return config.ModelConfig{}, "", moderr.ErrNoMatchingModel
+        }
 		// Validate tool requirement and web search availability when explicitly chosen
 		if len(req.Tools) > 0 && !mc.SupportsTools {
 			return config.ModelConfig{}, "", moderr.ErrNoMatchingModel

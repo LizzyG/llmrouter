@@ -12,12 +12,12 @@ import (
 func GenerateJSONSchema(obj any) string {
 	r := new(jsonschema.Reflector)
 	// Configure reflector if needed in the future.
-    schema := r.Reflect(obj)
-    b, err := json.Marshal(schema)
-    if err != nil {
-        return "{}"
-    }
-    return string(b)
+	schema := r.Reflect(obj)
+	b, err := json.Marshal(schema)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
 }
 
 // IsStringType reports whether T is string for generics handling.
@@ -33,7 +33,7 @@ func IsStringType[T any]() bool {
 func GenerateToolJSONSchema(obj any) string {
 	raw := GenerateJSONSchema(obj)
 	var m map[string]any
-    if err := json.Unmarshal([]byte(raw), &m); err != nil {
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
 		// Fall back to a minimal object
 		return `{"type":"object","properties":{}}`
 	}
@@ -48,15 +48,15 @@ func GenerateToolJSONSchema(obj any) string {
 // to avoid marshal/unmarshal cycles when the caller needs to inspect properties.
 // The returned map has been sanitized similarly to GenerateToolJSONSchema.
 func GenerateToolJSONSchemaMap(obj any) (map[string]any, error) {
-    raw := GenerateJSONSchema(obj)
-    var m map[string]any
-    if err := json.Unmarshal([]byte(raw), &m); err != nil {
-        return nil, err
-    }
+	raw := GenerateJSONSchema(obj)
+	var m map[string]any
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return nil, err
+	}
 
-    inlineTopLevelRef(m)
-    sanitizeMetaAndCoerceObject(m, true)
-    return m, nil
+	inlineTopLevelRef(m)
+	sanitizeMetaAndCoerceObject(m, true)
+	return m, nil
 }
 
 // GenerateResponseJSONSchema attempts to inline top-level $ref to a definition so that

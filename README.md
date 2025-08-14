@@ -19,6 +19,7 @@ llm:
       provider: openai
       model: gpt-4o
       api_key: ${OPENAI_API_KEY}
+      web_variant: gpt4o-web
       supports_web_search: false
       supports_tools: true
       supports_structured_output: true

@@ -22,6 +22,7 @@ type ModelConfig struct {
 	Provider                 string `koanf:"provider"`
 	Model                    string `koanf:"model"`
 	APIKey                   string `koanf:"api_key"`
+    WebVariant               string `koanf:"web_variant"`
 	SupportsWebSearch        bool   `koanf:"supports_web_search"`
 	SupportsTools            bool   `koanf:"supports_tools"`
 	SupportsStructuredOutput bool   `koanf:"supports_structured_output"`
