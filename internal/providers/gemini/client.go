@@ -246,6 +246,8 @@ func mapMessages(msgs []core.Message) []map[string]any {
 						out = append(out, map[string]any{"role": m.Role, "parts": parts})
 						continue
 					}
+				} else {
+					slog.Default().Debug("gemini: failed to parse assistant content as functionCall array", "error", err)
 				}
 
 				// Path B: assistant contains tool results to send back as functionResponse
@@ -261,6 +263,8 @@ func mapMessages(msgs []core.Message) []map[string]any {
 						})
 						parsed = true
 					}
+				} else {
+					slog.Default().Debug("gemini: failed to parse assistant content as single tool result", "error", err)
 				}
 				// If not parsed as single object, try array of tool results
 				if !parsed {
@@ -277,6 +281,8 @@ func mapMessages(msgs []core.Message) []map[string]any {
 								parsed = true
 							}
 						}
+					} else {
+						slog.Default().Debug("gemini: failed to parse assistant content as tool results array", "error", err)
 					}
 				}
 				// Fallback to plain text if neither parse path matched

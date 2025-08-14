@@ -82,6 +82,10 @@ func GenerateJSONSchemaFromToolDef(def ToolDef) string {
 	if len(required) > 0 {
 		schema["required"] = required
 	}
-	b, _ := json.Marshal(schema)
-	return string(b)
+    b, err := json.Marshal(schema)
+    if err != nil {
+        // Return a valid empty object schema on marshal failure
+        return "{}"
+    }
+    return string(b)
 }

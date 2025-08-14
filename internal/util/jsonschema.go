@@ -12,9 +12,12 @@ import (
 func GenerateJSONSchema(obj any) string {
 	r := new(jsonschema.Reflector)
 	// Configure reflector if needed in the future.
-	schema := r.Reflect(obj)
-	b, _ := json.Marshal(schema)
-	return string(b)
+    schema := r.Reflect(obj)
+    b, err := json.Marshal(schema)
+    if err != nil {
+        return "{}"
+    }
+    return string(b)
 }
 
 // IsStringType reports whether T is string for generics handling.
@@ -30,7 +33,7 @@ func IsStringType[T any]() bool {
 func GenerateToolJSONSchema(obj any) string {
 	raw := GenerateJSONSchema(obj)
 	var m map[string]any
-	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+    if err := json.Unmarshal([]byte(raw), &m); err != nil {
 		// Fall back to a minimal object
 		return `{"type":"object","properties":{}}`
 	}
