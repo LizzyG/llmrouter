@@ -269,3 +269,29 @@ func TestBoundedInt(t *testing.T) {
 		t.Fatal("expected cap to 10")
 	}
 }
+
+func TestMapToolCalls_HandlesMarshalError(t *testing.T) {
+	logger := slog.Default()
+	
+	// Create a tool call with unmarshalable args (channels can't be marshaled)
+	ch := make(chan int)
+	toolCalls := []ToolCall{{
+		CallID: "test1",
+		Name:   "ValidTool",
+		Args:   map[string]any{"data": "valid"},
+	}, {
+		CallID: "test2", 
+		Name:   "InvalidTool",
+		Args:   ch, // This will fail to marshal
+	}}
+	
+	result := mapToolCalls(toolCalls, logger)
+	
+	// Should only have the valid tool call, invalid one should be skipped
+	if len(result) != 1 {
+		t.Fatalf("expected 1 valid tool call, got %d", len(result))
+	}
+	if result[0].Name != "ValidTool" {
+		t.Fatalf("expected ValidTool, got %s", result[0].Name)
+	}
+}

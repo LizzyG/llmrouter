@@ -152,7 +152,7 @@ func (r *router) executeInternal(ctx context.Context, req Request, outputSchema 
 			start := time.Now()
 			resp, callErr := rc.Call(callCtx, CallParams{
 				Model:        mc.Model,
-				Messages:     mapMessages(conversation),
+				Messages:     r.mapMessages(conversation),
 				ToolDefs:     defs,
 				OutputSchema: outputSchema,
 				MaxTokens:    boundedInt(req.MaxTokens, mc.MaxOutputTokens),
@@ -346,32 +346,36 @@ func boundedInt(req, max int) int {
 	return req
 }
 
-func mapMessages(msgs []Message) []core.Message {
+func (r *router) mapMessages(msgs []Message) []core.Message {
 	out := make([]core.Message, len(msgs))
 	for i, m := range msgs {
 		out[i] = core.Message{
 			Role:        string(m.Role),
 			Content:     m.Content,
 			Images:      append([]string(nil), m.Images...),
-			ToolCalls:   mapToolCalls(m.ToolCalls),
+			ToolCalls:   mapToolCalls(m.ToolCalls, r.logger),
 			ToolResults: mapToolResults(m.ToolResults),
 		}
 	}
 	return out
 }
 
-func mapToolCalls(in []ToolCall) []core.ToolCall {
+func mapToolCalls(in []ToolCall, logger *slog.Logger) []core.ToolCall {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]core.ToolCall, len(in))
-	for i, tc := range in {
+	out := make([]core.ToolCall, 0, len(in))
+	for _, tc := range in {
 		var raw json.RawMessage
 		if tc.Args != nil {
-			b, _ := json.Marshal(tc.Args)
+			b, err := json.Marshal(tc.Args)
+			if err != nil {
+				logger.Error("failed to marshal tool call args for core message", "error", err, "tool", tc.Name)
+				continue // Skip this tool call if args are invalid
+			}
 			raw = b
 		}
-		out[i] = core.ToolCall{CallID: tc.CallID, Name: tc.Name, Args: raw}
+		out = append(out, core.ToolCall{CallID: tc.CallID, Name: tc.Name, Args: raw})
 	}
 	return out
 }
