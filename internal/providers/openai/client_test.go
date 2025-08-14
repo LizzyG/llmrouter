@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -18,13 +19,13 @@ func TestNewClient(t *testing.T) {
 }
 
 func TestMapChatMessages_StructuredToolResults(t *testing.T) {
-	// Test that structured ToolResults are properly mapped
+	// Test that structured ToolResults are properly mapped with JSON marshaling
 	msgs := []core.Message{{
 		Role: "assistant",
 		ToolResults: []core.ToolResult{{
 			CallID: "abc123",
 			Name:   "Weather",
-			Result: map[string]any{"temp": 72},
+			Result: map[string]any{"temp": 72, "condition": "sunny"},
 		}},
 	}}
 	mapped := mapChatMessages(msgs)
@@ -41,7 +42,16 @@ func TestMapChatMessages_StructuredToolResults(t *testing.T) {
 	if m["tool_call_id"] != "abc123" {
 		t.Fatalf("expected tool_call_id abc123, got %v", m["tool_call_id"])
 	}
-	if m["content"] == "" {
-		t.Fatalf("expected non-empty content")
+	content, ok := m["content"].(string)
+	if !ok || content == "" {
+		t.Fatalf("expected non-empty string content, got %v", m["content"])
+	}
+	// Verify it's valid JSON
+	var result map[string]any
+	if err := json.Unmarshal([]byte(content), &result); err != nil {
+		t.Fatalf("content should be valid JSON, got: %s, error: %v", content, err)
+	}
+	if result["temp"].(float64) != 72 {
+		t.Fatalf("expected temp 72, got %v", result["temp"])
 	}
 }
