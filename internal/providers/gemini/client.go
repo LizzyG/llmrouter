@@ -253,82 +253,8 @@ func mapMessages(msgs []core.Message) []map[string]any {
 			continue
 		}
 		if m.Content != "" {
-			// Try to interpret assistant tool results (formatToolResult JSON) as functionResponse
-			if m.Role == "assistant" {
-				// Path A: assistant content contains function calls to be echoed (for pairing)
-				var fcArray []map[string]any
-				if err := json.Unmarshal([]byte(m.Content), &fcArray); err == nil {
-					// If objects look like {"tool": name, "args": {...}}, emit functionCall parts
-					valid := true
-					partsFromFC := []any{}
-					for _, item := range fcArray {
-						name, okN := item["tool"].(string)
-						args, okA := item["args"].(map[string]any)
-						if okN && okA {
-							partsFromFC = append(partsFromFC, map[string]any{
-								"functionCall": map[string]any{
-									"name": name,
-									"args": args,
-								},
-							})
-						} else {
-							valid = false
-							break
-						}
-					}
-					if valid && len(partsFromFC) > 0 {
-						parts = append(parts, partsFromFC...)
-						// Note: role remains "assistant" when sending functionCall echo
-						// Short-circuit remaining parsing for this message
-						out = append(out, map[string]any{"role": m.Role, "parts": parts})
-						continue
-					}
-				} else {
-					slog.Default().Debug("gemini: failed to parse assistant content as functionCall array", "error", err)
-				}
-
-				// Path B: assistant contains tool results to send back as functionResponse
-				parsed := false
-				var obj map[string]any
-				if err := json.Unmarshal([]byte(m.Content), &obj); err == nil {
-					if toolName, ok := obj["tool"].(string); ok {
-						parts = append(parts, map[string]any{
-							"functionResponse": map[string]any{
-								"name":     toolName,
-								"response": obj["result"],
-							},
-						})
-						parsed = true
-					}
-				} else {
-					slog.Default().Debug("gemini: failed to parse assistant content as single tool result", "error", err)
-				}
-				// If not parsed as single object, try array of tool results
-				if !parsed {
-					var objArray []map[string]any
-					if err := json.Unmarshal([]byte(m.Content), &objArray); err == nil {
-						for _, toolResult := range objArray {
-							if toolName, ok := toolResult["tool"].(string); ok {
-								parts = append(parts, map[string]any{
-									"functionResponse": map[string]any{
-										"name":     toolName,
-										"response": toolResult["result"],
-									},
-								})
-								parsed = true
-							}
-						}
-					} else {
-						slog.Default().Debug("gemini: failed to parse assistant content as tool results array", "error", err)
-					}
-				}
-				// Fallback to plain text if neither parse path matched
-				if !parsed {
-					parts = append(parts, map[string]any{"text": m.Content})
-				}
-			} else {
-				parts = append(parts, map[string]any{"text": m.Content})
-			}
+			// Legacy fallback removed - router now uses structured ToolCalls/ToolResults fields
+			parts = append(parts, map[string]any{"text": m.Content})
 		}
 		for _, img := range m.Images {
 			parts = append(parts, map[string]any{
@@ -338,14 +264,6 @@ func mapMessages(msgs []core.Message) []map[string]any {
 			})
 		}
 		role := m.Role
-		// When sending functionResponse, Gemini expects role "tool"
-		if len(parts) > 0 {
-			if mr, ok := parts[0].(map[string]any); ok {
-				if _, hasFR := mr["functionResponse"]; hasFR {
-					role = "tool"
-				}
-			}
-		}
 		// Map assistant to model as per Gemini's role names
 		if role == "assistant" {
 			role = "model"
