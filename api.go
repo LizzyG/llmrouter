@@ -95,6 +95,13 @@ type Message struct {
     ToolResults []ToolResult // host-executed tool results
 }
 
+// ToolCall represents a model-requested function invocation.
+type ToolCall struct {
+    CallID string
+    Name   string
+    Args   any
+}
+
 // ToolResult represents output produced by executing a tool in the host app.
 type ToolResult struct {
     CallID string

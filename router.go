@@ -22,7 +22,6 @@ type CallParams = core.CallParams
 type ToolDef = core.ToolDef
 type RawResponse = core.RawResponse
 type Usage = core.Usage
-type ToolCall = core.ToolCall
 
 type router struct {
 	models       map[string]config.ModelConfig
@@ -186,7 +185,15 @@ func (r *router) executeInternal(ctx context.Context, req Request, outputSchema 
 			// provider adapters like Gemini can pair them with subsequent tool responses.
 			if len(resp.ToolCalls) > 0 {
 				// Record structured tool calls directly in the conversation
-				conversation = append(conversation, Message{Role: RoleAssistant, ToolCalls: append([]ToolCall(nil), resp.ToolCalls...)})
+				toolCalls := make([]ToolCall, len(resp.ToolCalls))
+				for i, tc := range resp.ToolCalls {
+					var args any
+					if len(tc.Args) > 0 {
+						_ = json.Unmarshal(tc.Args, &args)
+					}
+					toolCalls[i] = ToolCall{CallID: tc.CallID, Name: tc.Name, Args: args}
+				}
+				conversation = append(conversation, Message{Role: RoleAssistant, ToolCalls: toolCalls})
 			}
 
 			// EXECUTE TOOLS sequentially and collect all results

@@ -8,6 +8,7 @@ import (
 
 	moderr "github.com/lizzyg/llmrouter/errors"
 	"github.com/lizzyg/llmrouter/internal/config"
+	"github.com/lizzyg/llmrouter/internal/core"
 )
 
 type fakeClient struct {
@@ -96,8 +97,8 @@ func (t *getWeatherTool) Execute(ctx context.Context, args any) (any, error) {
 func TestToolWorkflow_UserLocationThenWeather(t *testing.T) {
 	// Fake provider issues two tool calls in sequence, then returns final JSON
 	fc := &fakeClient{responses: []RawResponse{
-		{ToolCalls: []ToolCall{{Name: "GetUserLocation", Args: []byte(`{}`)}}},
-		{ToolCalls: []ToolCall{{Name: "GetWeatherInLocation", Args: []byte(`{"location":"Portland, Oregon"}`)}}},
+		{ToolCalls: []core.ToolCall{{Name: "GetUserLocation", Args: []byte(`{}`)}}},
+		{ToolCalls: []core.ToolCall{{Name: "GetWeatherInLocation", Args: []byte(`{"location":"Portland, Oregon"}`)}}},
 		{Content: `{"weather":"Sunny and mild in Portland, Oregon"}`},
 	}}
 	models := map[string]config.ModelConfig{
@@ -186,7 +187,7 @@ func TestExecute_Typed_Repair(t *testing.T) {
 func TestToolLoop_Sequential(t *testing.T) {
 	// First call requests tool; second call returns final JSON
 	fc := &fakeClient{responses: []RawResponse{
-		{ToolCalls: []ToolCall{{Name: "echo", Args: []byte(`{"text":"hello"}`)}}},
+		{ToolCalls: []core.ToolCall{{Name: "echo", Args: []byte(`{"text":"hello"}`)}}},
 		{Content: `{"done":true}`},
 	}}
 	models := map[string]config.ModelConfig{
@@ -246,7 +247,7 @@ func TestSelect_OpenAI_WebVariantExplicit(t *testing.T) {
 }
 
 func TestUnknownToolError(t *testing.T) {
-	fc := &fakeClient{responses: []RawResponse{{ToolCalls: []ToolCall{{Name: "missing", Args: []byte(`{}`)}}}}}
+	fc := &fakeClient{responses: []RawResponse{{ToolCalls: []core.ToolCall{{Name: "missing", Args: []byte(`{}`)}}}}}
 	models := map[string]config.ModelConfig{
 		"g": {Provider: "gemini", Model: "gemini-1.5-pro", SupportsStructuredOutput: true, SupportsTools: true},
 	}

@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-    "errors"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"math"
-    "net"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -466,30 +466,30 @@ func withRetry(ctx context.Context, fn func() error) error {
 
 // httpStatusError wraps HTTP status codes to enable reliable retry decisions.
 type httpStatusError struct {
-    status int
-    body   string
+	status int
+	body   string
 }
 
 func (e *httpStatusError) Error() string {
-    return fmt.Sprintf("gemini http %d: %s", e.status, e.body)
+	return fmt.Sprintf("gemini http %d: %s", e.status, e.body)
 }
 
 // isTransient determines if an error is worth retrying using proper error type checking.
 func isTransient(err error) bool {
-    // Retry on 429 or 5xx using proper error type
-    var he *httpStatusError
-    if errors.As(err, &he) {
-        if he.status == 429 || he.status >= 500 {
-            return true
-        }
-        return false
-    }
-    // Retry on network timeouts
-    var ne net.Error
-    if errors.As(err, &ne) {
-        if ne.Timeout() {
-            return true
-        }
-    }
-    return false
+	// Retry on 429 or 5xx using proper error type
+	var he *httpStatusError
+	if errors.As(err, &he) {
+		if he.status == 429 || he.status >= 500 {
+			return true
+		}
+		return false
+	}
+	// Retry on network timeouts
+	var ne net.Error
+	if errors.As(err, &ne) {
+		if ne.Timeout() {
+			return true
+		}
+	}
+	return false
 }
