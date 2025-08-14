@@ -90,6 +90,16 @@ type Message struct {
 	Role    MessageRole
 	Content string
 	Images  []string // image URLs supported in v1
+    // Structured tool calling (optional fields)
+    ToolCalls   []ToolCall   // model-generated tool calls
+    ToolResults []ToolResult // host-executed tool results
+}
+
+// ToolResult represents output produced by executing a tool in the host app.
+type ToolResult struct {
+    CallID string
+    Name   string
+    Result any
 }
 
 // MessageRole defines who authored a message.

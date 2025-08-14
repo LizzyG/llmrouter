@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+    "errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"math"
+    "net"
 	"net/http"
 	"os"
+    "strings"
 	"time"
 
 	"github.com/lizzyg/llmrouter/internal/config"
@@ -170,9 +173,11 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 				if args, ok2 := p.FunctionCall["args"].(map[string]any); ok2 {
 					b, _ := json.Marshal(args)
 					raw = b
-				} else if anyArgs, ok3 := p.FunctionCall["args"].(any); ok3 {
-					b, _ := json.Marshal(anyArgs)
-					raw = b
+				} else {
+					if anyArgs := p.FunctionCall["args"]; anyArgs != nil {
+						b, _ := json.Marshal(anyArgs)
+						raw = b
+					}
 				}
 				toolCalls = append(toolCalls, core.ToolCall{Name: fc, Args: raw})
 			}
@@ -403,10 +408,14 @@ func withRetry(ctx context.Context, fn func() error) error {
 	)
 	var attempt int
 	for {
-		err := fn()
-		if err == nil {
-			return nil
-		}
+        err := fn()
+        if err == nil {
+            return nil
+        }
+        // Only retry transient errors similar to OpenAI client behavior
+        if !isTransient(err) {
+            return err
+        }
 		attempt++
 		if attempt >= maxAttempts {
 			return err
@@ -421,4 +430,29 @@ func withRetry(ctx context.Context, fn func() error) error {
 		case <-time.After(delay + time.Duration(float64(delay)*0.1)):
 		}
 	}
+}
+
+// Borrow the OpenAI transient detection pattern for Gemini simple errors.
+// Gemini uses plain errors; we retry on 429/5xx strings or network timeouts if provided.
+func isTransient(err error) bool {
+    // String sniffing for HTTP status codes in error text (since Gemini path uses fmt.Errorf)
+    if err == nil {
+        return false
+    }
+    es := err.Error()
+    if strings.Contains(es, " http 429:") {
+        return true
+    }
+    // Generic 5xx detection
+    if strings.Contains(es, " http 5") { // e.g., "http 500:", "http 503:"
+        return true
+    }
+    // Network timeouts
+    var ne net.Error
+    if errors.As(err, &ne) {
+        if ne.Timeout() {
+            return true
+        }
+    }
+    return false
 }

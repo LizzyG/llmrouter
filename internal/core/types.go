@@ -24,6 +24,9 @@ type Message struct {
 	Role    string
 	Content string
 	Images  []string
+    // Structured tool calling support
+    ToolCalls   []ToolCall
+    ToolResults []ToolResult
 }
 
 // ToolParameter represents a single parameter accepted by a tool.
@@ -59,6 +62,14 @@ type ToolCall struct {
 	CallID string
 	Name   string
 	Args   json.RawMessage
+}
+
+// ToolResult represents the output from a tool execution
+// and may be paired to a specific tool call via CallID.
+type ToolResult struct {
+    CallID string
+    Name   string
+    Result any
 }
 
 // GenerateJSONSchemaFromToolDef produces a standard JSON Schema object string

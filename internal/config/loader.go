@@ -88,6 +88,7 @@ func resolveEnvVars(cfg *LLMConfig) {
 		model.APIKey = resolveEnvString(model.APIKey)
 		model.Provider = resolveEnvString(model.Provider)
 		model.Model = resolveEnvString(model.Model)
+        model.WebVariant = resolveEnvString(model.WebVariant)
 		cfg.Models[key] = model
 	}
 }
