@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -374,10 +375,12 @@ func withRetry(ctx context.Context, fn func() error) error {
 		if delay > maxDelay {
 			delay = maxDelay
 		}
+		// Add randomized jitter (0-25% of delay) to prevent thundering herd
+		jitter := time.Duration(rand.Float64() * 0.25 * float64(delay))
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(delay + time.Duration(float64(delay)*0.1)):
+		case <-time.After(delay + jitter):
 		}
 	}
 }
