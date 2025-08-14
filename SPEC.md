@@ -355,7 +355,10 @@ type Answer struct {
     Summary string `json:"summary"`
 }
 
-client := llmrouter.NewFromFile("config.yaml")
+client, err := llmrouter.NewFromFile()
+if err != nil {
+    panic(err)
+}
 
 res, err := client.Execute[Answer](ctx, llmrouter.Request{
     Model: "gpt4o",
@@ -367,6 +370,10 @@ res, err := client.Execute[Answer](ctx, llmrouter.Request{
     Temperature: 0.2,
 })
 ```
+
+**Note:** `NewFromFile()` loads configuration from:
+1. The file specified by `LLM_CONFIG_PATH` environment variable, or
+2. `config.yaml` in the current directory if no environment variable is set
 
 ---
 
