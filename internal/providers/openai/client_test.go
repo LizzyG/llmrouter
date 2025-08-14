@@ -55,3 +55,41 @@ func TestMapChatMessages_StructuredToolResults(t *testing.T) {
 		t.Fatalf("expected temp 72, got %v", result["temp"])
 	}
 }
+
+func TestMapChatMessages_UnmarshalableToolResult(t *testing.T) {
+	// Test that unmarshalable tool results produce valid JSON error objects
+	ch := make(chan int) // channels can't be marshaled
+	msgs := []core.Message{{
+		Role: "assistant",
+		ToolResults: []core.ToolResult{{
+			CallID: "test123",
+			Name:   "InvalidTool",
+			Result: ch,
+		}},
+	}}
+	mapped := mapChatMessages(msgs)
+	if len(mapped) != 1 {
+		t.Fatalf("expected 1 mapped message, got %d", len(mapped))
+	}
+	m := mapped[0]
+	if m["role"] != "tool" {
+		t.Fatalf("expected role tool, got %v", m["role"])
+	}
+	content, ok := m["content"].(string)
+	if !ok || content == "" {
+		t.Fatalf("expected non-empty string content, got %v", m["content"])
+	}
+	// Verify it's valid JSON
+	var errorResult map[string]any
+	if err := json.Unmarshal([]byte(content), &errorResult); err != nil {
+		t.Fatalf("error content should be valid JSON, got: %s, error: %v", content, err)
+	}
+	// Verify it contains the error message
+	errorMsg, ok := errorResult["error"].(string)
+	if !ok {
+		t.Fatalf("expected error field to be string, got %v", errorResult["error"])
+	}
+	if errorMsg == "" {
+		t.Fatalf("expected non-empty error message")
+	}
+}

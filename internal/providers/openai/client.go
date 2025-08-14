@@ -186,7 +186,8 @@ func mapChatMessages(msgs []core.Message) []map[string]any {
                 if err != nil {
                     // A tool result that cannot be marshaled is a significant issue.
                     // We'll format it as a JSON error object to send to the model.
-                    resultJSON = []byte(fmt.Sprintf("{\"error\":\"failed to marshal tool result: %v\"}", err))
+                    errorPayload := map[string]string{"error": fmt.Sprintf("failed to marshal tool result: %v", err)}
+                    resultJSON, _ = json.Marshal(errorPayload)
                 }
                 out = append(out, map[string]any{
                     "role":         "tool",
