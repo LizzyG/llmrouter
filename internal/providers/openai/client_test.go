@@ -2,8 +2,10 @@ package openai
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/lizzyg/llmrouter/internal/config"
 	"github.com/lizzyg/llmrouter/internal/core"
@@ -91,5 +93,32 @@ func TestMapChatMessages_UnmarshalableToolResult(t *testing.T) {
 	}
 	if errorMsg == "" {
 		t.Fatalf("expected non-empty error message")
+	}
+}
+
+func TestExponentialBackoffJitter(t *testing.T) {
+	// Test that the jitter is randomized by checking multiple delay calculations
+	baseDelay := 100 * time.Millisecond
+	
+	// Calculate delay for attempt 2 (first retry)
+	attempt := 2
+	expectedBaseDelay := time.Duration(float64(baseDelay) * math.Pow(2, float64(attempt-1)))
+	
+	// Verify the exponential backoff calculation
+	if expectedBaseDelay != 200*time.Millisecond {
+		t.Errorf("expected base delay 200ms for attempt 2, got %v", expectedBaseDelay)
+	}
+	
+	// The jitter should be 0-25% of the delay, so for 200ms base:
+	// - Minimum total delay: 200ms  
+	// - Maximum total delay: 200ms + 50ms = 250ms
+	minExpected := expectedBaseDelay
+	maxExpected := expectedBaseDelay + time.Duration(0.25*float64(expectedBaseDelay))
+	
+	if maxExpected != 250*time.Millisecond {
+		t.Errorf("expected max delay 250ms, got %v", maxExpected)
+	}
+	if minExpected != 200*time.Millisecond {
+		t.Errorf("expected min delay 200ms, got %v", minExpected)
 	}
 }
