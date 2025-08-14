@@ -4,15 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
+    "errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"math"
-	"net"
+    "net"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/lizzyg/llmrouter/internal/config"
@@ -147,7 +146,7 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 		defer resp.Body.Close()
 		if resp.StatusCode >= 400 {
 			b, _ := io.ReadAll(resp.Body)
-			return fmt.Errorf("gemini http %d: %s", resp.StatusCode, string(b))
+			return &httpStatusError{status: resp.StatusCode, body: string(b)}
 		}
 		dec := json.NewDecoder(resp.Body)
 		return dec.Decode(&gr)
@@ -465,27 +464,32 @@ func withRetry(ctx context.Context, fn func() error) error {
 	}
 }
 
-// Borrow the OpenAI transient detection pattern for Gemini simple errors.
-// Gemini uses plain errors; we retry on 429/5xx strings or network timeouts if provided.
+// httpStatusError wraps HTTP status codes to enable reliable retry decisions.
+type httpStatusError struct {
+    status int
+    body   string
+}
+
+func (e *httpStatusError) Error() string {
+    return fmt.Sprintf("gemini http %d: %s", e.status, e.body)
+}
+
+// isTransient determines if an error is worth retrying using proper error type checking.
 func isTransient(err error) bool {
-	// String sniffing for HTTP status codes in error text (since Gemini path uses fmt.Errorf)
-	if err == nil {
-		return false
-	}
-	es := err.Error()
-	if strings.Contains(es, " http 429:") {
-		return true
-	}
-	// Generic 5xx detection
-	if strings.Contains(es, " http 5") { // e.g., "http 500:", "http 503:"
-		return true
-	}
-	// Network timeouts
-	var ne net.Error
-	if errors.As(err, &ne) {
-		if ne.Timeout() {
-			return true
-		}
-	}
-	return false
+    // Retry on 429 or 5xx using proper error type
+    var he *httpStatusError
+    if errors.As(err, &he) {
+        if he.status == 429 || he.status >= 500 {
+            return true
+        }
+        return false
+    }
+    // Retry on network timeouts
+    var ne net.Error
+    if errors.As(err, &ne) {
+        if ne.Timeout() {
+            return true
+        }
+    }
+    return false
 }
