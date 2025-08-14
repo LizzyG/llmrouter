@@ -219,40 +219,40 @@ func mapMessages(msgs []core.Message) []map[string]any {
 	}
 	out := make([]map[string]any, 0, len(msgs))
 	for _, m := range msgs {
-        parts := []any{}
-        // Prefer structured fields first
-        if len(m.ToolCalls) > 0 {
-            for _, it := range m.ToolCalls {
-                var args any
-                if len(it.Args) > 0 {
-                    _ = json.Unmarshal(it.Args, &args)
-                }
-                parts = append(parts, map[string]any{
-                    "functionCall": map[string]any{
-                        "name": it.Name,
-                        "args": args,
-                    },
-                })
-            }
-            role := m.Role
-            if role == "assistant" {
-                role = "model"
-            }
-            out = append(out, map[string]any{"role": role, "parts": parts})
-            continue
-        }
-        if len(m.ToolResults) > 0 {
-            for _, tr := range m.ToolResults {
-                parts = append(parts, map[string]any{
-                    "functionResponse": map[string]any{
-                        "name":     tr.Name,
-                        "response": tr.Result,
-                    },
-                })
-            }
-            out = append(out, map[string]any{"role": "tool", "parts": parts})
-            continue
-        }
+		parts := []any{}
+		// Prefer structured fields first
+		if len(m.ToolCalls) > 0 {
+			for _, it := range m.ToolCalls {
+				var args any
+				if len(it.Args) > 0 {
+					_ = json.Unmarshal(it.Args, &args)
+				}
+				parts = append(parts, map[string]any{
+					"functionCall": map[string]any{
+						"name": it.Name,
+						"args": args,
+					},
+				})
+			}
+			role := m.Role
+			if role == "assistant" {
+				role = "model"
+			}
+			out = append(out, map[string]any{"role": role, "parts": parts})
+			continue
+		}
+		if len(m.ToolResults) > 0 {
+			for _, tr := range m.ToolResults {
+				parts = append(parts, map[string]any{
+					"functionResponse": map[string]any{
+						"name":     tr.Name,
+						"response": tr.Result,
+					},
+				})
+			}
+			out = append(out, map[string]any{"role": "tool", "parts": parts})
+			continue
+		}
 		if m.Content != "" {
 			// Try to interpret assistant tool results (formatToolResult JSON) as functionResponse
 			if m.Role == "assistant" {

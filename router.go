@@ -184,10 +184,10 @@ func (r *router) executeInternal(ctx context.Context, req Request, outputSchema 
 
 			// Surface the model's function calls back into the conversation so
 			// provider adapters like Gemini can pair them with subsequent tool responses.
-            if len(resp.ToolCalls) > 0 {
-                // Record structured tool calls directly in the conversation
-                conversation = append(conversation, Message{Role: RoleAssistant, ToolCalls: append([]ToolCall(nil), resp.ToolCalls...)})
-            }
+			if len(resp.ToolCalls) > 0 {
+				// Record structured tool calls directly in the conversation
+				conversation = append(conversation, Message{Role: RoleAssistant, ToolCalls: append([]ToolCall(nil), resp.ToolCalls...)})
+			}
 
 			// EXECUTE TOOLS sequentially and collect all results
 			var toolResults []map[string]any
@@ -222,24 +222,24 @@ func (r *router) executeInternal(ctx context.Context, req Request, outputSchema 
 				toolResults = append(toolResults, item)
 			}
 
-            // Add all tool results as a single assistant message using structured field
-            if len(toolResults) > 0 {
-                if os.Getenv("LLM_VERBOSE_MESSAGES") == "1" {
-                    r.logger.Info("combined tool results",
-                        slog.Int("count", len(toolResults)),
-                    )
-                }
-                // Convert to []ToolResult for the public message type
-                tr := make([]ToolResult, 0, len(toolResults))
-                for _, it := range toolResults {
-                    tr = append(tr, ToolResult{
-                        CallID: asString(it["tool_call_id"]),
-                        Name:   asString(it["tool"]),
-                        Result: it["result"],
-                    })
-                }
-                conversation = append(conversation, Message{Role: RoleAssistant, ToolResults: tr})
-            }
+			// Add all tool results as a single assistant message using structured field
+			if len(toolResults) > 0 {
+				if os.Getenv("LLM_VERBOSE_MESSAGES") == "1" {
+					r.logger.Info("combined tool results",
+						slog.Int("count", len(toolResults)),
+					)
+				}
+				// Convert to []ToolResult for the public message type
+				tr := make([]ToolResult, 0, len(toolResults))
+				for _, it := range toolResults {
+					tr = append(tr, ToolResult{
+						CallID: asString(it["tool_call_id"]),
+						Name:   asString(it["tool"]),
+						Result: it["result"],
+					})
+				}
+				conversation = append(conversation, Message{Role: RoleAssistant, ToolResults: tr})
+			}
 			return "", false, nil
 		}()
 		if done {
@@ -342,49 +342,49 @@ func boundedInt(req, max int) int {
 func mapMessages(msgs []Message) []core.Message {
 	out := make([]core.Message, len(msgs))
 	for i, m := range msgs {
-        out[i] = core.Message{
-            Role:        string(m.Role),
-            Content:     m.Content,
-            Images:      append([]string(nil), m.Images...),
-            ToolCalls:   mapToolCalls(m.ToolCalls),
-            ToolResults: mapToolResults(m.ToolResults),
-        }
+		out[i] = core.Message{
+			Role:        string(m.Role),
+			Content:     m.Content,
+			Images:      append([]string(nil), m.Images...),
+			ToolCalls:   mapToolCalls(m.ToolCalls),
+			ToolResults: mapToolResults(m.ToolResults),
+		}
 	}
 	return out
 }
 
 func mapToolCalls(in []ToolCall) []core.ToolCall {
-    if len(in) == 0 {
-        return nil
-    }
-    out := make([]core.ToolCall, len(in))
-    for i, tc := range in {
-        var raw json.RawMessage
-        if tc.Args != nil {
-            b, _ := json.Marshal(tc.Args)
-            raw = b
-        }
-        out[i] = core.ToolCall{CallID: tc.CallID, Name: tc.Name, Args: raw}
-    }
-    return out
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]core.ToolCall, len(in))
+	for i, tc := range in {
+		var raw json.RawMessage
+		if tc.Args != nil {
+			b, _ := json.Marshal(tc.Args)
+			raw = b
+		}
+		out[i] = core.ToolCall{CallID: tc.CallID, Name: tc.Name, Args: raw}
+	}
+	return out
 }
 
 func mapToolResults(in []ToolResult) []core.ToolResult {
-    if len(in) == 0 {
-        return nil
-    }
-    out := make([]core.ToolResult, len(in))
-    for i, tr := range in {
-        out[i] = core.ToolResult{CallID: tr.CallID, Name: tr.Name, Result: tr.Result}
-    }
-    return out
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]core.ToolResult, len(in))
+	for i, tr := range in {
+		out[i] = core.ToolResult{CallID: tr.CallID, Name: tr.Name, Result: tr.Result}
+	}
+	return out
 }
 
 func asString(v any) string {
-    if s, ok := v.(string); ok {
-        return s
-    }
-    return ""
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
 }
 
 // executeWithSchema allows the typed helper to pass an explicit output schema.

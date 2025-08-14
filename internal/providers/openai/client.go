@@ -191,62 +191,7 @@ func mapChatMessages(msgs []core.Message) []map[string]any {
             }
             continue
         }
-        // For OpenAI:
-        // - Assistant messages containing function calls should be encoded as an assistant message
-        //   with tool_calls, not plain content.
-        // - Tool results should be encoded as role "tool" messages with tool_call_id.
-        if m.Role == "assistant" && m.Content != "" {
-            var arr []map[string]any
-            if err := json.Unmarshal([]byte(m.Content), &arr); err == nil {
-                // Check if looks like function call echo (has args)
-                isFuncCalls := true
-                for _, it := range arr {
-                    if _, ok := it["args"].(map[string]any); !ok {
-                        isFuncCalls = false
-                        break
-                    }
-                }
-                if isFuncCalls {
-                    tc := make([]map[string]any, 0, len(arr))
-                    for _, it := range arr {
-                        name, _ := it["tool"].(string)
-                        args, _ := it["args"].(map[string]any)
-                        id, _ := it["tool_call_id"].(string)
-                        argsStr := "{}"
-                        if b, err := json.Marshal(args); err == nil {
-                            argsStr = string(b)
-                        }
-                        tc = append(tc, map[string]any{
-                            "type": "function",
-                            "id":   id,
-                            "function": map[string]any{
-                                "name":      name,
-                                "arguments": argsStr,
-                            },
-                        })
-                    }
-                    out = append(out, map[string]any{
-                        "role":       "assistant",
-                        "content":    "",
-                        "tool_calls": tc,
-                    })
-                    continue
-                }
-                // Else: treat as tool results array
-                for _, tr := range arr {
-                    if toolName, ok := tr["tool"].(string); ok {
-                        toolCallID, _ := tr["tool_call_id"].(string)
-                        out = append(out, map[string]any{
-                            "role":         "tool",
-                            "tool_call_id": toolCallID,
-                            "name":         toolName,
-                            "content":      fmt.Sprintf("%v", tr["result"]),
-                        })
-                    }
-                }
-                continue
-            }
-        }
+        // Legacy fallback removed - router now uses structured ToolCalls/ToolResults fields
         content := []any{}
         if m.Content != "" {
             content = append(content, map[string]any{"type": "text", "text": m.Content})
