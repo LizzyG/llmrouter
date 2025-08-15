@@ -146,7 +146,10 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode >= 400 {
-			b, _ := io.ReadAll(resp.Body)
+			b, readErr := io.ReadAll(resp.Body)
+			if readErr != nil {
+				c.logger.Warn("failed to read error response body", "error", readErr)
+			}
 			return &httpStatusError{status: resp.StatusCode, body: string(b)}
 		}
 		dec := json.NewDecoder(resp.Body)

@@ -40,7 +40,10 @@ func GenerateToolJSONSchema(obj any) string {
 
 	inlineTopLevelRef(m)
 	sanitizeMetaAndCoerceObject(m, true)
-	b, _ := json.Marshal(m)
+	b, err := json.Marshal(m)
+	if err != nil {
+		return `{"type":"object","properties":{}}`
+	}
 	return string(b)
 }
 
