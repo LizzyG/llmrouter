@@ -365,14 +365,7 @@ func withRetry(ctx context.Context, fn func() error) error {
 	return retry.WithRetry(ctx, fn)
 }
 
-// httpStatusError wraps HTTP status codes to enable reliable retry decisions.
-type httpStatusError struct {
-	*retry.HTTPStatusError
-}
-
 // NewHTTPStatusError creates a new HTTP status error for Gemini
-func NewHTTPStatusError(status int, body string) *httpStatusError {
-	return &httpStatusError{
-		HTTPStatusError: retry.NewHTTPStatusError(status, body, "gemini"),
-	}
+func NewHTTPStatusError(status int, body string) *retry.HTTPStatusError {
+	return retry.NewHTTPStatusError(status, body, "gemini")
 }

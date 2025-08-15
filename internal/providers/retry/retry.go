@@ -7,7 +7,6 @@ import (
 	"math"
 	"math/rand"
 	"net"
-	"reflect"
 	"time"
 )
 
@@ -94,27 +93,7 @@ func IsTransient(err error) bool {
 		}
 		return false
 	}
-	
-	// Also check for provider-specific wrapper types that embed HTTPStatusError
-	// This handles cases where providers wrap the shared error type
-	if err != nil {
-		// Use reflection to check if the error has a Status field
-		errValue := reflect.ValueOf(err)
-		if errValue.Kind() == reflect.Ptr && !errValue.IsNil() {
-			errValue = errValue.Elem()
-			if errValue.Kind() == reflect.Struct {
-				statusField := errValue.FieldByName("Status")
-				if statusField.IsValid() && statusField.CanInt() {
-					status := int(statusField.Int())
-					if status == 429 || status >= 500 {
-						return true
-					}
-					return false
-				}
-			}
-		}
-	}
-	
+
 	// Retry on network timeouts
 	var ne net.Error
 	if errors.As(err, &ne) {
