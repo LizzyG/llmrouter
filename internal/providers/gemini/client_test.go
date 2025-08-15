@@ -1,9 +1,9 @@
 package gemini
 
 import (
+	"context"
 	"io"
 	"log/slog"
-	"math"
 	"net/http"
 	"testing"
 	"time"
@@ -44,41 +44,87 @@ func TestIsTransient(t *testing.T) {
 	}
 }
 
-func TestExponentialBackoffJitter(t *testing.T) {
-	// Test that the jitter is randomized by checking multiple delay calculations
-	// This is a bit tricky to test deterministically, so we'll verify the range
+func TestWithRetryBehavior(t *testing.T) {
+	// Test actual retry behavior with timing verification
 	
-	// Use a fixed seed to make the test deterministic
-	// Note: In Go 1.20+, rand.Float64() uses a global source that's automatically seeded
-	// But for test consistency, we can use a local source
+	t.Run("retry_with_transient_errors", func(t *testing.T) {
+		callCount := 0
+		start := time.Now()
+		
+		err := withRetry(context.Background(), func() error {
+			callCount++
+			if callCount < 3 {
+				// Return transient error for first 2 attempts
+				return &httpStatusError{status: 429, body: "rate limited"}
+			}
+			// Succeed on 3rd attempt
+			return nil
+		})
+		
+		elapsed := time.Since(start)
+		
+		if err != nil {
+			t.Fatalf("expected success after retries, got: %v", err)
+		}
+		if callCount != 3 {
+			t.Fatalf("expected 3 calls (1 initial + 2 retries), got %d", callCount)
+		}
+		
+		// Should have at least 2 delays: ~200ms + ~400ms = ~600ms minimum
+		// With jitter, could be up to 25% more: ~750ms maximum
+		minExpected := 500 * time.Millisecond
+		maxExpected := 1000 * time.Millisecond // Extra buffer for test timing variance
+		
+		if elapsed < minExpected {
+			t.Errorf("retry delays too short: expected at least %v, got %v", minExpected, elapsed)
+		}
+		if elapsed > maxExpected {
+			t.Errorf("retry delays too long: expected at most %v, got %v", maxExpected, elapsed)
+		}
+	})
 	
-	baseDelay := 100 * time.Millisecond
+	t.Run("no_retry_on_non_transient_error", func(t *testing.T) {
+		callCount := 0
+		start := time.Now()
+		
+		err := withRetry(context.Background(), func() error {
+			callCount++
+			// Return non-transient error
+			return &httpStatusError{status: 400, body: "bad request"}
+		})
+		
+		elapsed := time.Since(start)
+		
+		if err == nil {
+			t.Fatal("expected error to be returned")
+		}
+		if callCount != 1 {
+			t.Fatalf("expected 1 call (no retries), got %d", callCount)
+		}
+		
+		// Should complete quickly with no delays
+		maxExpected := 50 * time.Millisecond
+		if elapsed > maxExpected {
+			t.Errorf("non-transient error should not retry: expected at most %v, got %v", maxExpected, elapsed)
+		}
+	})
 	
-	// Calculate delay for attempt 2 (first retry)
-	attempt := 2
-	expectedBaseDelay := time.Duration(float64(baseDelay) * math.Pow(2, float64(attempt-1)))
-	
-	// We can't easily test the exact jitter without exposing internals,
-	// but we can verify that multiple calls to the retry logic would
-	// produce different delays due to randomization.
-	// For now, just verify that our jitter calculation range is reasonable.
-	
-	if expectedBaseDelay != 200*time.Millisecond {
-		t.Errorf("expected base delay 200ms for attempt 2, got %v", expectedBaseDelay)
-	}
-	
-	// The jitter should be 0-25% of the delay, so for 200ms base:
-	// - Minimum total delay: 200ms
-	// - Maximum total delay: 200ms + 50ms = 250ms
-	minExpected := expectedBaseDelay
-	maxExpected := expectedBaseDelay + time.Duration(0.25*float64(expectedBaseDelay))
-	
-	if maxExpected != 250*time.Millisecond {
-		t.Errorf("expected max delay 250ms, got %v", maxExpected)
-	}
-	if minExpected != 200*time.Millisecond {
-		t.Errorf("expected min delay 200ms, got %v", minExpected)
-	}
+	t.Run("eventual_failure_after_max_attempts", func(t *testing.T) {
+		callCount := 0
+		
+		err := withRetry(context.Background(), func() error {
+			callCount++
+			// Always return transient error
+			return &httpStatusError{status: 503, body: "service unavailable"}
+		})
+		
+		if err == nil {
+			t.Fatal("expected error after max attempts")
+		}
+		if callCount != 5 { // maxAttempts = 5
+			t.Fatalf("expected 5 attempts, got %d", callCount)
+		}
+	})
 }
 
 func TestMapMessages_InvalidToolCallArgs(t *testing.T) {
