@@ -10,6 +10,7 @@ import (
 
 	"github.com/lizzyg/llmrouter/internal/config"
 	"github.com/lizzyg/llmrouter/internal/core"
+	"github.com/lizzyg/llmrouter/internal/providers/retry"
 )
 
 func TestNewClient(t *testing.T) {
@@ -26,17 +27,17 @@ func TestIsTransient(t *testing.T) {
 		expected bool
 	}{
 		{"nil error", nil, false},
-		{"429 status", &httpStatusError{status: 429, body: "rate limited"}, true},
-		{"500 status", &httpStatusError{status: 500, body: "server error"}, true},
-		{"503 status", &httpStatusError{status: 503, body: "service unavailable"}, true},
-		{"400 status", &httpStatusError{status: 400, body: "bad request"}, false},
-		{"401 status", &httpStatusError{status: 401, body: "unauthorized"}, false},
-		{"404 status", &httpStatusError{status: 404, body: "not found"}, false},
+		{"429 status", NewHTTPStatusError(429, "rate limited"), true},
+		{"500 status", NewHTTPStatusError(500, "server error"), true},
+		{"503 status", NewHTTPStatusError(503, "service unavailable"), true},
+		{"400 status", NewHTTPStatusError(400, "bad request"), false},
+		{"401 status", NewHTTPStatusError(401, "unauthorized"), false},
+		{"404 status", NewHTTPStatusError(404, "not found"), false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isTransient(tt.err)
+			got := retry.IsTransient(tt.err)
 			if got != tt.expected {
 				t.Errorf("isTransient(%v) = %v, want %v", tt.err, got, tt.expected)
 			}
@@ -55,7 +56,7 @@ func TestWithRetryBehavior(t *testing.T) {
 			callCount++
 			if callCount < 3 {
 				// Return transient error for first 2 attempts
-				return &httpStatusError{status: 429, body: "rate limited"}
+				return NewHTTPStatusError(429, "rate limited")
 			}
 			// Succeed on 3rd attempt
 			return nil
@@ -90,7 +91,7 @@ func TestWithRetryBehavior(t *testing.T) {
 		err := withRetry(context.Background(), func() error {
 			callCount++
 			// Return non-transient error
-			return &httpStatusError{status: 400, body: "bad request"}
+			return NewHTTPStatusError(400, "bad request")
 		})
 		
 		elapsed := time.Since(start)
@@ -115,7 +116,7 @@ func TestWithRetryBehavior(t *testing.T) {
 		err := withRetry(context.Background(), func() error {
 			callCount++
 			// Always return transient error
-			return &httpStatusError{status: 503, body: "service unavailable"}
+			return NewHTTPStatusError(503, "service unavailable")
 		})
 		
 		if err == nil {

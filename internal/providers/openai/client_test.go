@@ -108,7 +108,7 @@ func TestWithRetryBehavior(t *testing.T) {
 			callCount++
 			if callCount < 3 {
 				// Return transient error for first 2 attempts
-				return &httpStatusError{status: 429, body: "rate limited"}
+				return NewHTTPStatusError(429, "rate limited")
 			}
 			// Succeed on 3rd attempt
 			return nil
@@ -143,7 +143,7 @@ func TestWithRetryBehavior(t *testing.T) {
 		err := c.withRetry(context.Background(), func() error {
 			callCount++
 			// Return non-transient error
-			return &httpStatusError{status: 400, body: "bad request"}
+			return NewHTTPStatusError(400, "bad request")
 		})
 		
 		elapsed := time.Since(start)
@@ -168,7 +168,7 @@ func TestWithRetryBehavior(t *testing.T) {
 		err := c.withRetry(context.Background(), func() error {
 			callCount++
 			// Always return transient error
-			return &httpStatusError{status: 503, body: "service unavailable"}
+			return NewHTTPStatusError(503, "service unavailable")
 		})
 		
 		if err == nil {

@@ -4,19 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
-	"math/rand"
-	"net"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/lizzyg/llmrouter/internal/config"
 	"github.com/lizzyg/llmrouter/internal/core"
+	"github.com/lizzyg/llmrouter/internal/providers/retry"
 )
 
 type Client struct {
@@ -150,7 +146,7 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 			if readErr != nil {
 				c.logger.Warn("failed to read error response body", "error", readErr)
 			}
-			return &httpStatusError{status: resp.StatusCode, body: string(b)}
+			return NewHTTPStatusError(resp.StatusCode, string(b))
 		}
 		dec := json.NewDecoder(resp.Body)
 		return dec.Decode(&gr)
@@ -366,65 +362,17 @@ func toGeminiSchema(node map[string]any) map[string]any {
 }
 
 func withRetry(ctx context.Context, fn func() error) error {
-	const (
-		maxAttempts = 5
-		baseDelay   = 200 * time.Millisecond
-		maxDelay    = 3 * time.Second
-	)
-	var attempt int
-	for {
-		err := fn()
-		if err == nil {
-			return nil
-		}
-		// Only retry transient errors similar to OpenAI client behavior
-		if !isTransient(err) {
-			return err
-		}
-		attempt++
-		if attempt >= maxAttempts {
-			return err
-		}
-		delay := time.Duration(float64(baseDelay) * math.Pow(2, float64(attempt-1)))
-		if delay > maxDelay {
-			delay = maxDelay
-		}
-		// Add randomized jitter (0-25% of delay) to prevent thundering herd
-		jitter := time.Duration(rand.Float64() * 0.25 * float64(delay))
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(delay + jitter):
-		}
-	}
+	return retry.WithRetry(ctx, fn)
 }
 
 // httpStatusError wraps HTTP status codes to enable reliable retry decisions.
 type httpStatusError struct {
-	status int
-	body   string
+	*retry.HTTPStatusError
 }
 
-func (e *httpStatusError) Error() string {
-	return fmt.Sprintf("gemini http %d: %s", e.status, e.body)
-}
-
-// isTransient determines if an error is worth retrying using proper error type checking.
-func isTransient(err error) bool {
-	// Retry on 429 or 5xx using proper error type
-	var he *httpStatusError
-	if errors.As(err, &he) {
-		if he.status == 429 || he.status >= 500 {
-			return true
-		}
-		return false
+// NewHTTPStatusError creates a new HTTP status error for Gemini
+func NewHTTPStatusError(status int, body string) *httpStatusError {
+	return &httpStatusError{
+		HTTPStatusError: retry.NewHTTPStatusError(status, body, "gemini"),
 	}
-	// Retry on network timeouts
-	var ne net.Error
-	if errors.As(err, &ne) {
-		if ne.Timeout() {
-			return true
-		}
-	}
-	return false
 }
