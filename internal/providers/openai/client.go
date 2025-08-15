@@ -50,7 +50,7 @@ type chatResponse struct {
 			Content   any `json:"content"`
 			ToolCalls []struct {
 				Type     string `json:"type"`
-                ID       string `json:"id"`
+				ID       string `json:"id"`
 				Function struct {
 					Name      string `json:"name"`
 					Arguments string `json:"arguments"`
@@ -106,7 +106,10 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode >= 400 {
-			b, _ := io.ReadAll(resp.Body)
+			b, readErr := io.ReadAll(resp.Body)
+			if readErr != nil {
+				c.logger.Warn("failed to read error response body", "error", readErr)
+			}
 			return &httpStatusError{status: resp.StatusCode, body: string(b)}
 		}
 		dec := json.NewDecoder(resp.Body)
@@ -119,10 +122,10 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 	out := core.RawResponse{}
 	if len(rr.Choices) > 0 {
 		msg := rr.Choices[0].Message
-        if len(msg.ToolCalls) > 0 {
+		if len(msg.ToolCalls) > 0 {
 			out.ToolCalls = make([]core.ToolCall, len(msg.ToolCalls))
 			for i, tc := range msg.ToolCalls {
-                out.ToolCalls[i] = core.ToolCall{CallID: tc.ID, Name: tc.Function.Name, Args: json.RawMessage(tc.Function.Arguments)}
+				out.ToolCalls[i] = core.ToolCall{CallID: tc.ID, Name: tc.Function.Name, Args: json.RawMessage(tc.Function.Arguments)}
 			}
 		} else {
 			switch v := msg.Content.(type) {
@@ -156,61 +159,61 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 
 func mapChatMessages(msgs []core.Message) []map[string]any {
 	out := make([]map[string]any, 0, len(msgs))
-    for _, m := range msgs {
-        // Prefer structured fields when present
-        if len(m.ToolCalls) > 0 {
-            tc := make([]map[string]any, 0, len(m.ToolCalls))
-            for _, it := range m.ToolCalls {
-                argsStr := "{}"
-                if len(it.Args) > 0 {
-                    argsStr = string(it.Args)
-                }
-                tc = append(tc, map[string]any{
-                    "type": "function",
-                    "id":   it.CallID,
-                    "function": map[string]any{
-                        "name":      it.Name,
-                        "arguments": argsStr,
-                    },
-                })
-            }
-            out = append(out, map[string]any{
-                "role":       m.Role,
-                "content":    "",
-                "tool_calls": tc,
-            })
-            continue
-        }
-        if len(m.ToolResults) > 0 {
-            for _, tr := range m.ToolResults {
-                resultJSON, err := json.Marshal(tr.Result)
-                if err != nil {
-                    // A tool result that cannot be marshaled is a significant issue.
-                    // We'll format it as a JSON error object to send to the model.
-                    errorPayload := map[string]string{"error": fmt.Sprintf("failed to marshal tool result: %v", err)}
-                    resultJSON, _ = json.Marshal(errorPayload)
-                }
-                out = append(out, map[string]any{
-                    "role":         "tool",
-                    "tool_call_id": tr.CallID,
-                    "name":         tr.Name,
-                    "content":      string(resultJSON),
-                })
-            }
-            continue
-        }
-        // Legacy fallback removed - router now uses structured ToolCalls/ToolResults fields
-        content := []any{}
-        if m.Content != "" {
-            content = append(content, map[string]any{"type": "text", "text": m.Content})
-        }
-        for _, img := range m.Images {
-            content = append(content, map[string]any{"type": "image_url", "image_url": map[string]any{"url": img}})
-        }
-        out = append(out, map[string]any{
-            "role":    m.Role,
-            "content": content,
-        })
+	for _, m := range msgs {
+		// Prefer structured fields when present
+		if len(m.ToolCalls) > 0 {
+			tc := make([]map[string]any, 0, len(m.ToolCalls))
+			for _, it := range m.ToolCalls {
+				argsStr := "{}"
+				if len(it.Args) > 0 {
+					argsStr = string(it.Args)
+				}
+				tc = append(tc, map[string]any{
+					"type": "function",
+					"id":   it.CallID,
+					"function": map[string]any{
+						"name":      it.Name,
+						"arguments": argsStr,
+					},
+				})
+			}
+			out = append(out, map[string]any{
+				"role":       m.Role,
+				"content":    "",
+				"tool_calls": tc,
+			})
+			continue
+		}
+		if len(m.ToolResults) > 0 {
+			for _, tr := range m.ToolResults {
+				resultJSON, err := json.Marshal(tr.Result)
+				if err != nil {
+					// A tool result that cannot be marshaled is a significant issue.
+					// We'll format it as a JSON error object to send to the model.
+					errorPayload := map[string]string{"error": fmt.Sprintf("failed to marshal tool result: %v", err)}
+					resultJSON, _ = json.Marshal(errorPayload)
+				}
+				out = append(out, map[string]any{
+					"role":         "tool",
+					"tool_call_id": tr.CallID,
+					"name":         tr.Name,
+					"content":      string(resultJSON),
+				})
+			}
+			continue
+		}
+		// Legacy fallback removed - router now uses structured ToolCalls/ToolResults fields
+		content := []any{}
+		if m.Content != "" {
+			content = append(content, map[string]any{"type": "text", "text": m.Content})
+		}
+		for _, img := range m.Images {
+			content = append(content, map[string]any{"type": "image_url", "image_url": map[string]any{"url": img}})
+		}
+		out = append(out, map[string]any{
+			"role":    m.Role,
+			"content": content,
+		})
 	}
 	return out
 }
