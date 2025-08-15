@@ -195,7 +195,9 @@ func (r *router) executeInternal(ctx context.Context, req Request, outputSchema 
 				for i, tc := range resp.ToolCalls {
 					var args any
 					if len(tc.Args) > 0 {
-						_ = json.Unmarshal(tc.Args, &args)
+						if err := json.Unmarshal(tc.Args, &args); err != nil {
+							r.logger.Warn("failed to unmarshal tool call args from provider response", "error", err, "tool", tc.Name)
+						}
 					}
 					toolCalls[i] = ToolCall{CallID: tc.CallID, Name: tc.Name, Args: args}
 				}

@@ -1,12 +1,15 @@
 package gemini
 
 import (
+	"io"
+	"log/slog"
 	"math"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/lizzyg/llmrouter/internal/config"
+	"github.com/lizzyg/llmrouter/internal/core"
 )
 
 func TestNewClient(t *testing.T) {
@@ -76,4 +79,58 @@ func TestExponentialBackoffJitter(t *testing.T) {
 	if minExpected != 200*time.Millisecond {
 		t.Errorf("expected min delay 200ms, got %v", minExpected)
 	}
+}
+
+func TestMapMessages_InvalidToolCallArgs(t *testing.T) {
+	// Test that invalid JSON in tool call args is handled gracefully
+	c := &Client{
+		logger: testLogger(),
+	}
+	
+	msgs := []core.Message{{
+		Role: "assistant",
+		ToolCalls: []core.ToolCall{{
+			Name: "TestTool",
+			Args: []byte(`{invalid json`), // Invalid JSON
+		}},
+	}}
+	
+	// Should not panic and should log the error
+	result := mapMessages(msgs, c.logger)
+	
+	// Verify the message was still processed
+	if len(result) != 1 {
+		t.Fatalf("expected 1 mapped message, got %d", len(result))
+	}
+	
+	msg := result[0]
+	if msg["role"] != "model" {
+		t.Fatalf("expected role model, got %v", msg["role"])
+	}
+	
+	// Verify parts contain the function call with nil args
+	parts, ok := msg["parts"].([]any)
+	if !ok || len(parts) != 1 {
+		t.Fatalf("expected 1 part, got %v", msg["parts"])
+	}
+	
+	part := parts[0].(map[string]any)
+	funcCall, ok := part["functionCall"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected functionCall in part")
+	}
+	
+	if funcCall["name"] != "TestTool" {
+		t.Fatalf("expected tool name TestTool, got %v", funcCall["name"])
+	}
+	
+	// args should be nil due to unmarshal failure
+	if funcCall["args"] != nil {
+		t.Fatalf("expected nil args due to unmarshal error, got %v", funcCall["args"])
+	}
+}
+
+// testLogger returns a logger that discards output for testing
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

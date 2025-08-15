@@ -68,7 +68,7 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 	}
 
 	payload := generateRequest{
-		Contents:          mapMessages(nonSys),
+		Contents:          mapMessages(nonSys, c.logger),
 		GenerationConfig:  map[string]any{},
 		SystemInstruction: nil,
 	}
@@ -157,8 +157,11 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 	}
 
 	if os.Getenv("LLM_VERBOSE_MESSAGES") == "1" {
-		respBody, _ := json.Marshal(gr)
-		c.logger.Info("gemini response", "response", string(respBody))
+		if respBody, err := json.Marshal(gr); err != nil {
+			c.logger.Info("gemini response", "response", "<failed to marshal response>", "marshal_error", err)
+		} else {
+			c.logger.Info("gemini response", "response", string(respBody))
+		}
 	}
 
 	out := core.RawResponse{}
@@ -171,12 +174,18 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 				// Extract args map
 				var raw json.RawMessage
 				if args, ok2 := p.FunctionCall["args"].(map[string]any); ok2 {
-					b, _ := json.Marshal(args)
-					raw = b
+					if b, err := json.Marshal(args); err != nil {
+						c.logger.Warn("failed to marshal tool call args from gemini response", "error", err, "tool", fc)
+					} else {
+						raw = b
+					}
 				} else {
 					if anyArgs := p.FunctionCall["args"]; anyArgs != nil {
-						b, _ := json.Marshal(anyArgs)
-						raw = b
+						if b, err := json.Marshal(anyArgs); err != nil {
+							c.logger.Warn("failed to marshal tool call args from gemini response", "error", err, "tool", fc)
+						} else {
+							raw = b
+						}
 					}
 				}
 				toolCalls = append(toolCalls, core.ToolCall{Name: fc, Args: raw})
@@ -207,7 +216,7 @@ func (c *Client) Call(ctx context.Context, params core.CallParams) (core.RawResp
 	return out, nil
 }
 
-func mapMessages(msgs []core.Message) []map[string]any {
+func mapMessages(msgs []core.Message, logger *slog.Logger) []map[string]any {
 	if os.Getenv("LLM_VERBOSE_MESSAGES") == "1" {
 		for i, m := range msgs {
 			slog.Default().Info("gemini mapMessages debug",
@@ -225,7 +234,9 @@ func mapMessages(msgs []core.Message) []map[string]any {
 			for _, it := range m.ToolCalls {
 				var args any
 				if len(it.Args) > 0 {
-					_ = json.Unmarshal(it.Args, &args)
+					if err := json.Unmarshal(it.Args, &args); err != nil {
+						logger.Warn("failed to unmarshal tool call args from core message", "error", err, "tool", it.Name)
+					}
 				}
 				parts = append(parts, map[string]any{
 					"functionCall": map[string]any{
