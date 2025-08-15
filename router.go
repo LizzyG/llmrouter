@@ -86,34 +86,28 @@ func (r *router) executeInternal(ctx context.Context, req Request, outputSchema 
 	// Prepare tool definitions for the API
 	defs := make([]ToolDef, len(req.Tools))
 	for i, t := range req.Tools {
-		// Build parameter list directly from a parsed, sanitized schema map
-		schemaMap, err := util.GenerateToolJSONSchemaMap(t.Parameters())
+		// Generate tool parameters directly from the struct using reflection
+		paramMaps, err := util.GenerateToolParameters(t.Parameters())
 		if err != nil {
 			return "", err
 		}
-		props, _ := schemaMap["properties"].(map[string]any)
-		reqList := map[string]bool{}
-		if reqArr, ok := schemaMap["required"].([]any); ok {
-			for _, v := range reqArr {
-				if s, ok2 := v.(string); ok2 {
-					reqList[s] = true
-				}
-			}
-		}
-		paramList := make([]core.ToolParameter, 0, len(props))
-		for name, frag := range props {
-			var fragMap map[string]any
-			if m, ok := frag.(map[string]any); ok {
-				fragMap = m
-			} else {
-				fragMap = map[string]any{"type": "string"}
-			}
+		
+		// Convert the parameter maps to core.ToolParameter structs
+		paramList := make([]core.ToolParameter, 0, len(paramMaps))
+		for _, paramMap := range paramMaps {
+			name := paramMap["name"].(string)
+			required := paramMap["required"].(bool)
+			description := paramMap["description"].(string)
+			schema := paramMap["schema"].(map[string]any)
+			
 			paramList = append(paramList, core.ToolParameter{
-				Name:     name,
-				Required: reqList[name],
-				Schema:   fragMap,
+				Name:        name,
+				Required:    required,
+				Description: description,
+				Schema:      schema,
 			})
 		}
+		
 		defs[i] = ToolDef{
 			Name:        t.Name(),
 			Description: t.Description(),

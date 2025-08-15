@@ -14,10 +14,10 @@ import (
 // This is a minimal smoke test ensuring the client can be constructed.
 // Network calls are not made here.
 func TestNewClient(t *testing.T) {
-    c := New(config.ModelConfig{APIKey: "test", Model: "gpt-4o"}, &http.Client{}, nil)
-    if c == nil {
-        t.Fatal("expected client")
-    }
+	c := New(config.ModelConfig{APIKey: "test", Model: "gpt-4o"}, &http.Client{}, nil)
+	if c == nil {
+		t.Fatal("expected client")
+	}
 }
 
 func TestMapChatMessages_StructuredToolResults(t *testing.T) {
@@ -99,11 +99,11 @@ func TestMapChatMessages_UnmarshalableToolResult(t *testing.T) {
 func TestWithRetryBehavior(t *testing.T) {
 	// Test actual retry behavior with timing verification
 	c := &Client{}
-	
+
 	t.Run("retry_with_transient_errors", func(t *testing.T) {
 		callCount := 0
 		start := time.Now()
-		
+
 		err := c.withRetry(context.Background(), func() error {
 			callCount++
 			if callCount < 3 {
@@ -113,21 +113,21 @@ func TestWithRetryBehavior(t *testing.T) {
 			// Succeed on 3rd attempt
 			return nil
 		})
-		
+
 		elapsed := time.Since(start)
-		
+
 		if err != nil {
 			t.Fatalf("expected success after retries, got: %v", err)
 		}
 		if callCount != 3 {
 			t.Fatalf("expected 3 calls (1 initial + 2 retries), got %d", callCount)
 		}
-		
+
 		// Should have at least 2 delays: ~200ms + ~400ms = ~600ms minimum
 		// With jitter, could be up to 25% more: ~750ms maximum
 		minExpected := 500 * time.Millisecond
 		maxExpected := 1000 * time.Millisecond // Extra buffer for test timing variance
-		
+
 		if elapsed < minExpected {
 			t.Errorf("retry delays too short: expected at least %v, got %v", minExpected, elapsed)
 		}
@@ -135,42 +135,42 @@ func TestWithRetryBehavior(t *testing.T) {
 			t.Errorf("retry delays too long: expected at most %v, got %v", maxExpected, elapsed)
 		}
 	})
-	
+
 	t.Run("no_retry_on_non_transient_error", func(t *testing.T) {
 		callCount := 0
 		start := time.Now()
-		
+
 		err := c.withRetry(context.Background(), func() error {
 			callCount++
 			// Return non-transient error
 			return NewHTTPStatusError(400, "bad request")
 		})
-		
+
 		elapsed := time.Since(start)
-		
+
 		if err == nil {
 			t.Fatal("expected error to be returned")
 		}
 		if callCount != 1 {
 			t.Fatalf("expected 1 call (no retries), got %d", callCount)
 		}
-		
+
 		// Should complete quickly with no delays
 		maxExpected := 50 * time.Millisecond
 		if elapsed > maxExpected {
 			t.Errorf("non-transient error should not retry: expected at most %v, got %v", maxExpected, elapsed)
 		}
 	})
-	
+
 	t.Run("eventual_failure_after_max_attempts", func(t *testing.T) {
 		callCount := 0
-		
+
 		err := c.withRetry(context.Background(), func() error {
 			callCount++
 			// Always return transient error
 			return NewHTTPStatusError(503, "service unavailable")
 		})
-		
+
 		if err == nil {
 			t.Fatal("expected error after max attempts")
 		}
