@@ -1,0 +1,23 @@
+# Go build
+bin/
+obj/
+pkg/
+
+# Environment
+.env
+*.env
+.env.local
+*.local
+
+# Logs
+*.log
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Coverage
+coverage.out

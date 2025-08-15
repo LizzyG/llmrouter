@@ -1,0 +1,184 @@
+llm:
+  models:
+    # ---------- OpenAI ----------
+    gpt5:
+      provider: openai
+      model: gpt-5
+      api_key: ${OPENAI_API_KEY}
+      supports_web_search: false
+      supports_tools: true
+      supports_structured_output: true
+      context_window: 400000
+      max_output_tokens: 128000
+    gpt5mini:
+      provider: openai
+      model: gpt-5-mini
+      api_key: ${OPENAI_API_KEY}
+      supports_web_search: false
+      supports_tools: true
+      supports_structured_output: true
+      context_window: 400000
+      max_output_tokens:
+    gpt5nano:
+      provider: openai
+      model: gpt-5-nano
+      api_key: ${OPENAI_API_KEY}
+      supports_web_search: false
+      supports_tools: true
+      supports_structured_output: true
+      context_window: 400000
+      max_output_tokens:
+    gpt41:
+      provider: openai
+      model: gpt-4.1
+      api_key: ${OPENAI_API_KEY}
+      supports_web_search: true
+      supports_tools: true
+      supports_structured_output: true
+      context_window: 1047576
+      max_output_tokens: 32768
+    gpt41mini:
+      provider: openai
+      model: gpt-4.1-mini
+      api_key: ${OPENAI_API_KEY}
+      supports_web_search: true
+      supports_tools: true
+      supports_structured_output: true
+      context_window: 1047576
+      max_output_tokens: 32768
+    gpt41nano:
+      provider: openai
+      model: gpt-4.1-nano
+      api_key: ${OPENAI_API_KEY}
+      supports_web_search: false
+      supports_tools: true
+      supports_structured_output: true
+      context_window: 1047576
+      max_output_tokens: 32768
+    gpt4o:
+      provider: openai
+      model: gpt-4o
+      api_key: ${OPENAI_API_KEY}
+      supports_web_search: true
+      supports_tools: true
+      supports_structured_output: true
+      context_window: 128000
+      max_output_tokens: 16384
+    gpt4omini:
+      provider: openai
+      model: gpt-4o-mini
+      api_key: ${OPENAI_API_KEY}
+      supports_web_search: true
+      supports_tools: true
+      supports_structured_output: true
+      context_window: 128000
+      max_output_tokens: 16384
+    gpt4o_search:
+      provider: openai
+      model: gpt-4o-search-preview
+      api_key: ${OPENAI_API_KEY}
+      supports_web_search: true
+      supports_tools: false
+      supports_structured_output: false
+      context_window: 128000
+      max_output_tokens:
+    gpt4omini_search:
+      provider: openai
+      model: gpt-4o-mini-search-preview
+      api_key: ${OPENAI_API_KEY}
+      supports_web_search: true
+      supports_tools: false
+      supports_structured_output: false
+      context_window: 128000
+      max_output_tokens:
+    o3:
+      provider: openai
+      model: o3
+      api_key: ${OPENAI_API_KEY}
+      supports_web_search: false
+      supports_tools: true
+      supports_structured_output: true
+      context_window: 200000
+      max_output_tokens: 100000
+    o4mini:
+      provider: openai
+      model: o4-mini
+      api_key: ${OPENAI_API_KEY}
+      supports_web_search: false
+      supports_tools: true
+      supports_structured_output: true
+      context_window: 200000
+      max_output_tokens: 100000
+    # ---------- Google / Gemini ----------
+    gemini15pro:
+      provider: gemini
+      model: gemini-1.5-pro
+      api_key: ${GEMINI_API_KEY}
+      supports_web_search: true
+      supports_tools: true
+      supports_structured_output: true
+      context_window: 2000000
+      max_output_tokens:
+    gemini15flash:
+      provider: gemini
+      model: gemini-1.5-flash
+      api_key: ${GEMINI_API_KEY}
+      supports_web_search: true
+      supports_tools: true
+      supports_structured_output: true
+      context_window: 1000000
+      max_output_tokens:
+    gemini15flash8b:
+      provider: gemini
+      model: gemini-1.5-flash-8b
+      api_key: ${GEMINI_API_KEY}
+      supports_web_search: true
+      supports_tools: true
+      supports_structured_output: true
+      context_window: 1000000
+      max_output_tokens:
+    gemini20flash:
+      provider: gemini
+      model: gemini-2.0-flash
+      api_key: ${GEMINI_API_KEY}
+      supports_web_search: true
+      supports_tools: true
+      supports_structured_output: true
+      context_window: 1000000
+      max_output_tokens:
+    gemini20flashlite:
+      provider: gemini
+      model: gemini-2.0-flash-lite
+      api_key: ${GEMINI_API_KEY}
+      supports_web_search: true
+      supports_tools: true
+      supports_structured_output: true
+      context_window: 1000000
+      max_output_tokens:
+    gemini25pro:
+      provider: gemini
+      model: gemini-2.5-pro
+      api_key: ${GEMINI_API_KEY}
+      supports_web_search: true
+      supports_tools: true
+      supports_structured_output: true
+      context_window: 1000000
+      max_output_tokens:
+    gemini25flash:
+      provider: gemini
+      model: gemini-2.5-flash
+      api_key: ${GEMINI_API_KEY}
+      supports_web_search: true
+      supports_tools: true
+      supports_structured_output: true
+      context_window: 1000000
+      max_output_tokens:
+    gemini25flashlite:
+      provider: gemini
+      model: gemini-2.5-flash-lite
+      api_key: ${GEMINI_API_KEY}
+      supports_web_search: true
+      supports_tools: true
+      supports_structured_output: true
+      context_window: 1000000
+      max_output_tokens:
